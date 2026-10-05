@@ -1,5 +1,25 @@
 # Development notes (out-of-scope findings for later sessions)
 
+- **To do (idea, 2026-10-05): a "clean" option** that deletes the big,
+  re-downloadable archive files of an analysis and keeps everything else.
+  For 3C 273 the downloads are 4.9 GB (sky images 2.7, raw images 0.7,
+  auxil 0.7, event files 0.5, exposure maps 0.2, housekeeping 0.1);
+  everything the later steps write is small. Design notes:
+  - Dry run by default: list what would go and how much space it frees;
+    delete only with an explicit flag.
+  - Write the exact command (and OBSID list) that brings the data back,
+    e.g. `restore_data.sh`; the downloader resumes and fills in.
+  - Keep a manifest of the archive files used (name, size, checksum,
+    PROCVER) from the Step 3 inventory, so a later re-download can be
+    compared: HEASARC sometimes reprocesses observations, and different
+    files could change the results.
+  - Also offer to remove regenerable intermediates (e.g. re-imaged event
+    exposures, runner working folders); never touch user-edited files
+    (overrides, notes) or the products.
+  - After cleaning, Steps 6–7 (master table, light curve) still run, since
+    they need only the photometry tables; Steps 3–5 need the data back.
+  - Build it after Step 7, when the full set of products is known.
+
 Logged during **Step 1** (setup, doctor, runner; branch `step1-setup`).
 
 - **Things to fix in the XRT pipeline too** (found while planning to copy its
