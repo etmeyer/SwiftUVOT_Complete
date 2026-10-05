@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor backups
+*~
+\#*\#
+.#*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Internal development notes, research evidence and scratch analyses (not published)
+_dev_internal/
+
+# Test runs (local pipeline shakedown output)
+test_runs/
+
+# Documentation website built by mkdocs (published by .github/workflows/docs.yml)
+site/
+
+# Swift data and pipeline products (never committed)
+UVOT_input/
+UVOT_output/
+*.img
+*.img.gz
+*.evt
+*.evt.gz
+*.hk
+*.hk.gz
+*.fits
+*.fits.gz
+*.reg

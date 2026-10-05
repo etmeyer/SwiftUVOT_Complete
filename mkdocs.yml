@@ -1,0 +1,44 @@
+# Documentation site, built from docs/ by .github/workflows/docs.yml and
+# published at site_url. Preview locally:
+#   pip install mkdocs-material && mkdocs serve
+site_name: Swift UVOT Pipeline
+site_description: Step-by-step documentation for the Swift UVOT light-curve pipeline
+site_url: https://etmeyer.github.io/SwiftUVOT_Complete/
+repo_url: https://github.com/etmeyer/SwiftUVOT_Complete
+repo_name: etmeyer/SwiftUVOT_Complete
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.footer
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+
+markdown_extensions:
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn

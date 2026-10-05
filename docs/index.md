@@ -1,0 +1,32 @@
+# Swift UVOT Light-Curve Pipeline — Documentation
+
+A step-by-step pipeline for multi-epoch light curves of point sources from Swift UVOT data.
+It is the companion to the Swift XRT pipeline
+([documentation](https://etmeyer.github.io/SwiftXRT_Complete/)).
+
+> **Status (October 2026):** planning is complete and the scripts are being written. This page
+> describes the planned workflow; each step will get its own page, with the mechanism, inputs
+> and outputs, gotchas and space for notes, as in the XRT documentation.
+
+## Planned workflow
+
+| Step | What it does |
+| ---- | ------------ |
+| 1. Setup | Check HEASoft and the UVOT CALDB; one terminal (HEASoft) is enough |
+| 2. Download | Fetch UVOT sky images, exposure maps, event files and housekeeping from the HEASARC archive, and check the download against the archive's exposure log |
+| 3. Inventory | Classify every exposure: filter, frame time, image or event mode, aspect correction, whether the source is in the field of view |
+| 4. Positions and regions | Measure the source position in each exposure; write source and background regions; diagnostics such as trailed images and sensitivity patches |
+| 5. Photometry | Run `uvotsource` on every exposure, keeping every number and flag |
+| 6. Master table | Apply the quality rules and your overrides; one row per exposure with the reason it is used or excluded |
+| 7. Light curve | Combine the good exposures into one point per observation and filter; detections, upper limits and saturated lower limits; plots |
+
+A per-exposure light curve (for short-timescale variability) is a planned extension.
+
+## What the pipeline checks for
+
+- **Saturation.** Bright sources can exceed the coincidence-loss limit (0.98 raw counts per
+  frame) in full-frame exposures; those values are kept only as lower limits.
+- **Pointing.** Exposures without aspect correction, trailed exposures taken while the
+  spacecraft was still settling, and the spacecraft jitter of August 2023 – April 2024.
+- **Detector sensitivity patches** flagged by the UVOT calibration.
+- **Coverage.** Whether the source is inside the image at all.
