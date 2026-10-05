@@ -46,3 +46,32 @@ Logged during **Step 1** (setup, doctor, runner; branch `step1-setup`).
 
 - **Shell setup:** `setup_swiftuvot` (docs/01-setup.md) has to be added to
   `/etc/bash.bashrc.local` by someone with root.
+
+Logged during **Step 2** (download; branch `step2-download`).
+
+- **Fixed in the UVOT copy of the downloader** (the three XRT issues above),
+  plus two more that also affect `swift_xrt_download.py`:
+  - The VO cone search returns only 11 columns unless asked for all with
+    `VERB=3`, so `xrt_expo_pc` / `xrt_expo_wt` (and here `uvot_expo_*`) are
+    never in the catalog rows; the XRT listing silently drops those columns.
+  - The HEASARC year_month path was built from an MJD string as if it were a
+    date (noted in the XRT doc_notes); the UVOT copy converts the MJD. The
+    `heasarc_flat` candidate (`obs/<OBSID>/`) never exists and was dropped.
+- With `astropy.io.votable`, HEASARC TAP results name the `obsid` column
+  `DataLinkID` (its VOTable ID) unless `to_table(use_names_over_ids=True)`.
+- UKSSDC's `archive/reproc/<OBSID>/uvot` files are byte-identical copies of
+  HEASARC's (checked for 2013 and 2025 observations); the downloader uses
+  HEASARC first and UKSSDC as fallback.
+- Download tests (resume, truncated and corrupted files, unknown OBSID, 404,
+  filter subset, Ctrl-C) are in `_dev_internal/step2_smoke/test_download.sh`;
+  the 12-OBSID 3C 273 test set is `_dev_internal/step2_test_obsids.txt`.
+  Note for such tests: non-interactive bash starts background jobs with
+  SIGINT ignored; use `set -m` to send them Ctrl-C.
+- Redirected to a file, Python block-buffers stdout, so a long download's log
+  stopped at 35 of 368 observations while it was at ~70: it looked hung.
+  The downloader now line-buffers stdout; later steps' scripts should too.
+- A no-op re-run of all of 3C 273 took 4.5 min: one HEAD request per file
+  (11,516), each on a new TLS connection. A `requests.Session` per thread
+  (connection reuse) brought it to 1.7 min. The XRT downloader opens a new
+  connection per request too. Decompressing every existing file to check it
+  added ~5 min, so that is now `--verify`; new downloads are always checked.
