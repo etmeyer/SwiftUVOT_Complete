@@ -29,6 +29,7 @@ theme:
 
 nav:
   - Home: index.md
+  - 1. Setup: 01-setup.md
 
 markdown_extensions:
   - tables

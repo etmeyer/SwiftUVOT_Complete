@@ -12,8 +12,9 @@ and thresholds checked on real data.
 **Author:** Eileen T. Meyer ([@etmeyer](https://github.com/etmeyer))  
 **License:** MIT
 
-> **Status (October 2026):** planning is complete; the scripts are not written yet.
-> The planned workflow is in [docs/index.md](docs/index.md).
+> **Status (October 2026):** Step 1 (setup and environment check) is done; the
+> other steps are being written. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
+> built from [docs/](docs/index.md).
 
 ---
 
@@ -37,17 +38,48 @@ standard tools do not guard against by default, among them:
 The pipeline measures every exposure, records why each one is used or excluded, and combines
 the good ones into one point per observation and filter.
 
-## Planned workflow
+## Workflow
 
-| Step | What |
-| ---- | ---- |
-| 1 | Setup and environment check (HEASoft, UVOT CALDB) |
-| 2 | Download UVOT data from the HEASARC archive |
-| 3 | Inventory of every exposure (filter, frame time, aspect, field of view) |
-| 4 | Source positions, regions and image diagnostics |
-| 5 | Photometry of every exposure with `uvotsource` |
-| 6 | Quality rules and overrides → master table |
-| 7 | Light curve: combine per observation and filter, plot |
+| Step | What | Script | Status |
+| ---- | ---- | ------ | ------ |
+| 1 | Setup and environment check (HEASoft, UVOT CALDB) — [docs](docs/01-setup.md) | `swift_uvot_doctor.py` | done |
+| 2 | Download UVOT data from the HEASARC archive | | planned |
+| 3 | Inventory of every exposure (filter, frame time, aspect, field of view) | | planned |
+| 4 | Source positions, regions and image diagnostics | | planned |
+| 5 | Photometry of every exposure with `uvotsource` | | planned |
+| 6 | Quality rules and overrides → master table | | planned |
+| 7 | Light curve: combine per observation and filter, plot | | planned |
+
+Everything runs in **one terminal** with HEASoft set up and CIAO not set up:
+
+```bash
+setup_swiftuvot; heainit
+swift_uvot_doctor.py          # Step 1: check the terminal
+```
+
+See [docs/01-setup.md](docs/01-setup.md) for installation, the UVOT CALDB, the
+shell setup and what the doctor checks.
+
+### `swift_uvot_doctor.py`
+
+Checks the terminal: pipeline on `PATH`, HEASoft (6.30 or newer) without
+CIAO, the UVOT CALDB (every file `uvotsource` uses, its sensitivity-loss
+version, a short enough `$CALDB`), Python packages and free disk. Exits
+non-zero if any check fails.
+
+```
+swift_uvot_doctor.py [--quiet] [--no-color] [--data-dir DIR]
+                     [--test-image FILE[+EXT] [--ra RA --dec DEC]]
+```
+
+`--test-image` also runs `uvotsource` on one exposure of a UVOT sky image.
+
+### `swift_uvot_runner.py` and `swift_uvot_env.py`
+
+Modules the scripts share: `swift_uvot_runner.py` runs every HEASoft call in
+isolation (own working folder, private parameter files, no terminal prompts,
+timeout, log) and judges success by the outputs, not only the exit status;
+`swift_uvot_env.py` holds the environment checks.
 
 ## Requirements
 

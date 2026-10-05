@@ -4,15 +4,15 @@ A step-by-step pipeline for multi-epoch light curves of point sources from Swift
 It is the companion to the Swift XRT pipeline
 ([documentation](https://etmeyer.github.io/SwiftXRT_Complete/)).
 
-> **Status (October 2026):** planning is complete and the scripts are being written. This page
-> describes the planned workflow; each step will get its own page, with the mechanism, inputs
-> and outputs, gotchas and space for notes, as in the XRT documentation.
+> **Status (October 2026):** Step 1 is done; the other steps are being written. Each step
+> gets its own page, with the mechanism, inputs and outputs, gotchas and space for notes, as in
+> the XRT documentation.
 
 ## Planned workflow
 
 | Step | What it does |
 | ---- | ------------ |
-| 1. Setup | Check HEASoft and the UVOT CALDB; one terminal (HEASoft) is enough |
+| [1. Setup](01-setup.md) | Install the pipeline and the UVOT CALDB; check the terminal with `swift_uvot_doctor.py` (one terminal, HEASoft, no CIAO) |
 | 2. Download | Fetch UVOT sky images, exposure maps, event files and housekeeping from the HEASARC archive, and check the download against the archive's exposure log |
 | 3. Inventory | Classify every exposure: filter, frame time, image or event mode, aspect correction, whether the source is in the field of view |
 | 4. Positions and regions | Measure the source position in each exposure; write source and background regions; diagnostics such as trailed images and sensitivity patches |
