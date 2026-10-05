@@ -12,8 +12,8 @@ and thresholds checked on real data.
 **Author:** Eileen T. Meyer ([@etmeyer](https://github.com/etmeyer))  
 **License:** MIT
 
-> **Status (October 2026):** Steps 1–2 (setup, download) are done; the other
-> steps are being written. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
+> **Status (October 2026):** Steps 1–3 (setup, download, inventory) are done;
+> the other steps are being written. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
 > built from [docs/](docs/index.md).
 
 ---
@@ -44,7 +44,7 @@ the good ones into one point per observation and filter.
 | ---- | ---- | ------ | ------ |
 | 1 | Setup and environment check (HEASoft, UVOT CALDB) — [docs](docs/01-setup.md) | `swift_uvot_doctor.py` | done |
 | 2 | Download UVOT data from the HEASARC archive — [docs](docs/02-download.md) | `swift_uvot_download.py` | done |
-| 3 | Inventory of every exposure (filter, frame time, aspect, field of view) | | planned |
+| 3 | Inventory of every exposure (filter, frame time, aspect, field of view) — [docs](docs/03-inventory.md) | `swift_uvot_inventory.py` | done |
 | 4 | Source positions, regions and image diagnostics | | planned |
 | 5 | Photometry of every exposure with `uvotsource` | | planned |
 | 6 | Quality rules and overrides → master table | | planned |
@@ -57,6 +57,7 @@ setup_swiftuvot; heainit
 swift_uvot_doctor.py          # Step 1: check the terminal
 swift_uvot_download.py --name "3C 273" --list-only                # Step 2: list ...
 swift_uvot_download.py --name "3C 273" --outdir UVOT_input --nproc 4   # ... and download
+swift_uvot_inventory.py --ra 187.2779 --dec 2.0524                      # Step 3: every exposure
 ```
 
 See [docs/01-setup.md](docs/01-setup.md) for installation, the UVOT CALDB, the
@@ -95,12 +96,29 @@ swift_uvot_download.py (--name NAME | --ra RA --dec DEC | --obsid ID | --obsid-f
                        [--overwrite] [--verify]
 ```
 
-### `swift_uvot_runner.py` and `swift_uvot_env.py`
+### `swift_uvot_inventory.py`
+
+Opens every extension (one per exposure) of every sky image in `UVOT_input`
+and writes `UVOT_output/uvot_inventory.txt`: filter, data mode, frame time,
+window, aspect correction, exposure and on-time, snapshot and whether the
+exposure opens it, image/event duplicates, and how much of the 5″ source
+circle and 27.5–35″ background annulus is exposed. Every exposure gets one
+status (`candidate`, `not_covered`, `partial`, `settling`, `nonphot`,
+`no_expmap`, `unreadable`). Also compares each observation's on-time per
+filter with the Swift master catalog. Exits 1 if any file is unreadable.
+
+```
+swift_uvot_inventory.py --ra RA --dec DEC [--indir UVOT_input] [--outdir UVOT_output]
+                        [--nproc 8] [--no-catalog]
+```
+
+### `swift_uvot_runner.py`, `swift_uvot_env.py`, `swift_uvot_tables.py`
 
 Modules the scripts share: `swift_uvot_runner.py` runs every HEASoft call in
 isolation (own working folder, private parameter files, no terminal prompts,
 timeout, log) and judges success by the outputs, not only the exit status;
-`swift_uvot_env.py` holds the environment checks.
+`swift_uvot_env.py` holds the environment checks; `swift_uvot_tables.py` reads
+and writes the pipeline's aligned text tables.
 
 ## Requirements
 
