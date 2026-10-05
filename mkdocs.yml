@@ -30,6 +30,7 @@ theme:
 nav:
   - Home: index.md
   - 1. Setup: 01-setup.md
+  - 2. Download data: 02-download.md
 
 markdown_extensions:
   - tables

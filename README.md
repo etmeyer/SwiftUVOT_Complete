@@ -12,8 +12,8 @@ and thresholds checked on real data.
 **Author:** Eileen T. Meyer ([@etmeyer](https://github.com/etmeyer))  
 **License:** MIT
 
-> **Status (October 2026):** Step 1 (setup and environment check) is done; the
-> other steps are being written. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
+> **Status (October 2026):** Steps 1–2 (setup, download) are done; the other
+> steps are being written. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
 > built from [docs/](docs/index.md).
 
 ---
@@ -43,7 +43,7 @@ the good ones into one point per observation and filter.
 | Step | What | Script | Status |
 | ---- | ---- | ------ | ------ |
 | 1 | Setup and environment check (HEASoft, UVOT CALDB) — [docs](docs/01-setup.md) | `swift_uvot_doctor.py` | done |
-| 2 | Download UVOT data from the HEASARC archive | | planned |
+| 2 | Download UVOT data from the HEASARC archive — [docs](docs/02-download.md) | `swift_uvot_download.py` | done |
 | 3 | Inventory of every exposure (filter, frame time, aspect, field of view) | | planned |
 | 4 | Source positions, regions and image diagnostics | | planned |
 | 5 | Photometry of every exposure with `uvotsource` | | planned |
@@ -55,6 +55,8 @@ Everything runs in **one terminal** with HEASoft set up and CIAO not set up:
 ```bash
 setup_swiftuvot; heainit
 swift_uvot_doctor.py          # Step 1: check the terminal
+swift_uvot_download.py --name "3C 273" --list-only                # Step 2: list ...
+swift_uvot_download.py --name "3C 273" --outdir UVOT_input --nproc 4   # ... and download
 ```
 
 See [docs/01-setup.md](docs/01-setup.md) for installation, the UVOT CALDB, the
@@ -73,6 +75,25 @@ swift_uvot_doctor.py [--quiet] [--no-color] [--data-dir DIR]
 ```
 
 `--test-image` also runs `uvotsource` on one exposure of a UVOT sky image.
+
+### `swift_uvot_download.py`
+
+Finds the Swift observations of a source (name, position, OBSID or a file of
+OBSIDs; optional date window), lists their UVOT exposure per filter, and
+downloads the chosen filters' sky images, exposure maps, raw images and event
+files plus housekeeping and `auxil` into `UVOT_input/<OBSID>/`. Files are
+downloaded under a temporary name and checked before they replace anything;
+each observation is checked against the catalog's exposure per filter;
+`download_report.txt` records the outcome. Re-running resumes and repairs.
+Exits 1 if any file failed or an OBSID was not found.
+
+```
+swift_uvot_download.py (--name NAME | --ra RA --dec DEC | --obsid ID | --obsid-file FILE)
+                       [--start-date YYYY-MM-DD] [--end-date YYYY-MM-DD] [--radius ARCMIN]
+                       [--filters vv bb uu w1 m2 w2] [--skip-raw] [--products ...]
+                       [--outdir UVOT_input] [--nproc N] [--list-only] [--max-obs N]
+                       [--overwrite] [--verify]
+```
 
 ### `swift_uvot_runner.py` and `swift_uvot_env.py`
 
