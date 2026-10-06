@@ -223,3 +223,58 @@ Logged during **Step 4** (positions and regions; branch `step4-positions`).
   region files accepted by `uvotsource`, overrides, position mismatch
   refused) are in `_dev_internal/step4_smoke/test_positions.sh`; Step 3's
   now include the `_sk_01` file and the exposure-log check.
+
+Logged during **Step 5** (photometry; branch `step5-photometry`).
+
+- **`uvotsource` 4.5 (HEASoft 6.36), read in UVOT/Source.pm and the task:**
+  - Counts per frame for the coincidence correction =
+    `RAW_STD_RATE` × (`FRAMTIME` − 6e-7 s × 290 rows), i.e. dead time
+    0.174 ms per frame (1.6 % at 11 ms frames, 4.8 % at 3.6 ms). Above
+    `FRAME_COUNT_LIMIT` = 0.98 the value is capped, `SATURATED` = 1 and
+    the rate's error is set equal to the rate.
+  - Count errors are binomial per frame (√(N(F−N)/F) for N counts in F
+    frames, floor 1 count); the background's assumes an 80 arcsec²
+    coincidence area.
+  - It sets only these `PHOTFLAG` bits itself: `NO_EXPOSURE_MAP`,
+    `NO_QUALITY_MAP` (always, without a quality map), `UNEVEN_EXPOSURE`,
+    `BAD_SSS`, `BAD_LSS`. The other bits in UVOT::LCPar are `uvotlc`'s.
+    `CORRFLAG` is always 0.
+  - On a LOW patch it uses factor 1, then suppresses the magnitude:
+    `CORR_RATE` and `SSS_RATE` −999, `MAG`/`AB_MAG` 99, but
+    `SENSCORR_RATE` (the fully corrected rate) and `FLUX_*` stay filled.
+    The pipeline's `rate` column is `SENSCORR_RATE` for that reason.
+  - `ssstype` (LOW|MID|HIGH) is a hidden parameter, so the patch level can
+    be changed in `uvotsource` itself; the pipeline records all three from
+    Step 4 instead. Defaults worth overriding: `sigma` 5, `apercorr`
+    CURVEOFGROWTH (no effect at 5″, but explicit is clearer).
+  - `image=file.img.gz[EXTNAME]` works as well as `[N]`; the pipeline uses
+    the extension name for the sky image and the exposure map, so the two
+    files' extension order does not matter.
+  - A refused region shows up as `error: ...` lines on stdout (e.g.
+    `error: low bkg.reg in FOV 0.000`), then exit status 3 and
+    "ERROR: No such process" on stderr; the reason column quotes the
+    `error:` lines.
+- **Run time:** 0.4 s per call alone; 2,891 calls 16 at a time took 4 m
+  21 s (about 1.4 s each under load: every call decompresses its whole sky
+  image). The output tables and logs take 126 MB for 3C 273.
+- **First look at the flags' effect** (rate / median rate of clean exposures
+  in the same observation and filter; numbers in docs/05-photometry.md):
+  LOW patch 0.95 (29 % more than 10 % low), MID-only 0.99, HIGH-only 1.00
+  — so exclude at LOW and check MID once more in Step 6; concentration
+  < 0.70: 0.31; axis ratio > 1.3 with concentration ≥ 0.70: 0.92;
+  saturated: 0.85; U at 0.95–0.98 counts/frame: 0.92. Near-saturation
+  bins in B and the UV have too few same-observation references below
+  0.85 counts/frame to judge; Step 6 should use the frame-time pairs
+  (same snapshot, 11 ms and 3.6 ms) instead.
+- **Tests no longer delete anything:** the smoke tests keep their work
+  folders and print the command to remove them; deleting is left to the
+  person running them. The Step 2 test truncates a file *inside the 3C 273
+  test set* and lets the downloader repair it; ask before running it.
+- Failed calls keep their working folders in `/tmp` (`swuvot_<tool>_*`) by
+  design; they accumulate (tests provoke failures on purpose). To do:
+  perhaps keep them under the analysis folder instead, where they are
+  found and cleaned with the rest.
+- Step 5 tests (one row per Step 4 row, LOW-patch and saturation handling,
+  a refused background region, a carried `no_background`, serial ==
+  parallel, `--plot-only` without HEASoft) are in
+  `_dev_internal/step5_smoke/test_photometry.sh`.

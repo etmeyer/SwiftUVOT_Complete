@@ -12,8 +12,8 @@ and thresholds checked on real data.
 **Author:** Eileen T. Meyer ([@etmeyer](https://github.com/etmeyer))  
 **License:** MIT
 
-> **Status (October 2026):** Steps 1–4 (setup, download, inventory, positions
-> and regions) are done; the other steps are being written. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
+> **Status (October 2026):** Steps 1–5 (setup, download, inventory, positions
+> and regions, photometry) are done; the other steps are being written. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
 > built from [docs/](docs/index.md).
 
 ---
@@ -46,7 +46,7 @@ the good ones into one point per observation and filter.
 | 2 | Download UVOT data from the HEASARC archive — [docs](docs/02-download.md) | `swift_uvot_download.py` | done |
 | 3 | Inventory of every exposure (filter, frame time, aspect, field of view) — [docs](docs/03-inventory.md) | `swift_uvot_inventory.py` | done |
 | 4 | Source positions, shapes and regions; trailed and smeared images, sensitivity patches — [docs](docs/04-positions.md) | `swift_uvot_positions.py`, `swift_uvot_viewer.py` | done |
-| 5 | Photometry of every exposure with `uvotsource` | | planned |
+| 5 | Photometry of every exposure with `uvotsource` — [docs](docs/05-photometry.md) | `swift_uvot_photometry.py` | done |
 | 6 | Quality rules and overrides → master table | | planned |
 | 7 | Light curve: combine per observation and filter, plot | | planned |
 
@@ -60,6 +60,7 @@ swift_uvot_download.py --name "3C 273" --outdir UVOT_input --nproc 4   # ... and
 swift_uvot_inventory.py --ra 187.2779 --dec 2.0524                      # Step 3: every exposure
 swift_uvot_positions.py --ra 187.2779 --dec 2.0524 --nproc 16           # Step 4: positions, regions
 swift_uvot_viewer.py                                                    # ... and contact sheets
+swift_uvot_photometry.py --nproc 16                                     # Step 5: photometry
 ```
 
 See [docs/01-setup.md](docs/01-setup.md) for installation, the UVOT CALDB, the
@@ -142,6 +143,23 @@ the observations you name.
 ```
 swift_uvot_viewer.py [--outdir UVOT_output] [--pdf FILE] [--per-category 48]
                      [--obsid OBSID ...]
+```
+
+### `swift_uvot_photometry.py`
+
+Runs `uvotsource` on every exposure Step 4 passed, one extension per call
+(with the exposure map, `apercorr=NONE`, `sigma=3`, `forcephot=no`,
+`history=no`), and keeps everything: raw counts and areas, counts per frame
+and the saturation flag, every correction factor, the corrected rate (also
+on a low-sensitivity patch, where `uvotsource` gives no magnitude), limits,
+magnitudes, flux densities and photometry flags. Checks the detector
+position and the low-sensitivity flag against Step 4. Output:
+`UVOT_output/uvot_photometry.txt`, `uvot_photometry.pdf` (every exposure's
+rate against time, per filter) and `photometry/<OBSID>/` (each call's FITS
+table and log). Exits 1 if any call failed.
+
+```
+swift_uvot_photometry.py [--outdir UVOT_output] [--nproc 8] [--plot-only]
 ```
 
 ### `swift_uvot_runner.py`, `swift_uvot_env.py`, `swift_uvot_tables.py`
