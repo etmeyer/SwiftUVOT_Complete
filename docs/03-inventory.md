@@ -67,11 +67,27 @@ pointings of other targets, or with small windows, your source can be partly
 or wholly outside an exposure.
 
 **Snapshots.** Swift observes in snapshots of up to ~30 minutes per orbit.
-The first exposure of a snapshot can start while the spacecraft is still
-settling; for event-mode exposures the archive's sky image is made with a
-single pointing, so the drift shows as a trailed source (in 3C 273's
-2009–2016 data, the UVW2 exposure that opens each snapshot). Step 4 looks at
-the image shapes; here the exposure is only marked with `first`.
+After a slew the spacecraft reports itself settled while its pointing is
+still converging by several arcseconds, so the first exposure of a snapshot
+can catch that drift. Whether it shows depends on the data mode. In image
+mode the instrument corrects the drift on board as it builds the image. In
+event mode every photon is time-tagged, but the archive builds the sky image
+with a single pointing for the whole exposure, so the drift is baked in as a
+trail; the photons themselves are fine, and an image rebuilt from the event
+file with the pointing at each photon's time is compact. Measured on all of
+3C 273's candidates:
+
+| Exposures | Number | Median axis ratio | Median offset | Trailed or offset* |
+| --------- | ------ | ----------------- | ------------- | ------------------ |
+| Event mode, opening a snapshot | 189 | 1.72 | 2.9″ | 82 % |
+| Event mode, other | 531 | 1.06–1.08 | 0.6″ | 0–1 % |
+| Image mode, opening a snapshot | 430 | 1.07–1.08 | 0.2–0.8″ | 5–7 % |
+| Image mode, other | 1,685 | 1.06–1.08 | 0.3–0.4″ | 2–6 % |
+
+\*axis ratio of the source above 1.3 or centroid more than 2″ from the
+catalogue position. In 2009–2016 each snapshot opened with a short UVW2 or
+UVW1 event-mode exposure. The inventory marks openers with `first` and
+counts the event-mode ones; Step 4 measures every exposure's shape.
 
 **Statuses.** Every extension gets exactly one:
 
@@ -111,7 +127,8 @@ The run prints one row per observation and filter (also saved as
 
 [summary] 122 extensions: candidate 121, not_covered 1
           ...
-[summary] 26 candidates open a snapshot; 0 extensions have an image/event duplicate
+[summary] 26 candidates open a snapshot, 10 of them in event mode (often trailed; Step 4 measures them)
+[summary] 0 extensions have an image/event duplicate
 [note] 2 OBSID folder(s) have no sky images: 00035017005 00035017006
 [check] on-time per OBSID and filter vs the catalog: 1 of 44 differ by more than 2% (and 10 s)
           00050900031 UVW1  inventory 8846 s, catalog 9928 s
@@ -135,8 +152,8 @@ Step 2 skipped as `no_data`.
 - **`aspcorr` `N`.** 40 % of 3C 273's candidates (1,147 of 2,886) have no
   field-star correction, nearly all in the UV filters and U. Step 4 measures
   where the source actually is in each.
-- **`first` = `yes` for event-mode exposures:** possible trailed images
-  (189 for 3C 273).
+- **`first` = `yes` with `mode` `EVENT`:** probably trailed (189 for
+  3C 273, 82 % of them trailed or offset). Image-mode openers are fine.
 - **`bkg_cover` below 1:** the standard background annulus runs off the
   exposed field (11 candidates for 3C 273); Step 4 chooses another
   background region there.

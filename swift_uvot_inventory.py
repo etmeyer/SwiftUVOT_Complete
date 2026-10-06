@@ -436,8 +436,9 @@ def main(argv=None):
             ', '.join('%s %d' % (s, counts[s]) for s in STATUSES if counts[s])),
         'src_cover / bkg_cover: fraction of the 5" circle / 27.5-35" annulus '
         'fully exposed; clearance: arcsec to the nearest unexposed pixel',
-        'first: first exposure of its snapshot; dup_of: other extension with '
-        'the same EXPID; event: event file present (event-mode exposures)',
+        'first: first exposure of its snapshot (in event mode often trailed); '
+        'dup_of: other extension with the same EXPID; event: event file '
+        'present (event-mode exposures)',
     ]
     inv_path = os.path.join(args.outdir, 'uvot_inventory.txt')
     write_table(inv_path, rows, COLUMNS, comments)
@@ -464,11 +465,18 @@ def main(argv=None):
         if sum(n.values()):
             print('          %-5s %s' % (filt, ', '.join(
                 '%s %d' % (s, v) for s, v in n.items() if v)))
-    firsts = sum(1 for r in rows if r['status'] == 'candidate'
-                 and r.get('first') == 'yes')
+    # Only event-mode openers tend to be trailed: image mode is corrected
+    # for drift on board, but the archive builds an event-mode sky image
+    # with one pointing for the whole exposure (82 % of 3C 273's 189).
+    openers = [r for r in rows if r['status'] == 'candidate'
+               and r.get('first') == 'yes']
+    event_openers = sum(1 for r in openers
+                        if str(r.get('mode', '')).upper() == 'EVENT')
     dups = sum(1 for r in rows if r.get('dup_of') not in (None, '-'))
-    print('[summary] %d candidates open a snapshot; %d extensions have an '
-          'image/event duplicate' % (firsts, dups))
+    print('[summary] %d candidates open a snapshot, %d of them in event mode '
+          '(often trailed; Step 4 measures them)' % (len(openers),
+                                                     event_openers))
+    print('[summary] %d extensions have an image/event duplicate' % dups)
     missing = [o for o in obsid_dirs if o not in by_obsid]
     if missing:
         print('[note] %d OBSID folder(s) have no sky images: %s' % (

@@ -131,3 +131,13 @@ Logged during **Step 3** (inventory; branch `step3-inventory`).
 - Inventory tests (clean run with rows == extensions, truncated sky image and
   exposure map, missing exposure map, reasons read back) are in
   `_dev_internal/step3_smoke/test_inventory.sh`.
+- **Which snapshot openers are trailed** (measured on all 2,886 3C 273
+  candidates: second-moment axis ratio and centroid offset of the source):
+  event-mode openers 82 % (axis ratio > 1.3 or offset > 2″; median ratio
+  1.72, offset 2.9″, N=189); image-mode openers 5–7 %, the same as other
+  exposures (2–6 %), consistent with UVOT's on-board drift correction
+  ("shift-and-add") in image mode. So the inventory's summary counts the
+  event-mode openers separately. Uncorrected aspect (`ASPCORR=NONE`) is
+  almost entirely event mode (89 %) and UV images in the 5′ windows (84 %);
+  full-frame image-mode exposures are 99 % corrected; most uncorrected
+  exposures are still within ~1.3″ of the source (90 %).
