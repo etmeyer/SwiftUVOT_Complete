@@ -34,6 +34,7 @@ nav:
   - 3. Inventory: 03-inventory.md
   - 4. Positions and regions: 04-positions.md
   - 5. Photometry: 05-photometry.md
+  - 6. Master table: 06-master-table.md
 
 markdown_extensions:
   - tables

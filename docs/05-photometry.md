@@ -3,7 +3,7 @@
 `swift_uvot_photometry.py` runs `uvotsource` on every exposure that
 [Step 4](04-positions.md) passed, one exposure per call, with Step 4's source
 and background regions and the exposure map. It keeps every number and flag
-`uvotsource` reports. Nothing is excluded here: Step 6 (coming) applies the
+`uvotsource` reports. Nothing is excluded here: [Step 6](06-master-table.md) applies the
 quality rules to these numbers, so a rule can be changed and re-applied
 without running HEASoft again.
 
