@@ -668,11 +668,7 @@ _thread_state = threading.local()
 
 
 def _session() -> requests.Session:
-    """
-    One HTTP session per thread, so archive requests reuse connections: a
-    re-run checks every file's size with a HEAD request, and with a new
-    TLS connection for each of 11,516 files (3C 273) that took 4.5 min.
-    """
+    """One HTTP session per thread, so archive requests reuse connections."""
     session = getattr(_thread_state, "session", None)
     if session is None:
         session = requests.Session()
@@ -680,9 +676,25 @@ def _session() -> requests.Session:
     return session
 
 
+# Answers that mean "not now" rather than "no": HEASARC refused directory
+# listings with 403 during a burst of ~100 requests per second.
+_RETRY_STATUS = {403, 429, 500, 502, 503, 504}
+_BACKOFF = (5, 15, 45)  # s before the 2nd, 3rd and 4th attempt
+
+
 def list_remote_dir(url: str) -> list[str]:
-    """File names in a simple Apache/nginx directory listing."""
-    resp = _session().get(url, timeout=60)
+    """
+    File names in a simple Apache/nginx directory listing. Refusals and
+    server errors are retried with a back-off; raises requests.HTTPError
+    if they persist.
+    """
+    for wait in _BACKOFF + (None,):
+        resp = _session().get(url, timeout=60)
+        if resp.status_code in _RETRY_STATUS and wait is not None:
+            resp.close()
+            time.sleep(wait)
+            continue
+        break
     resp.raise_for_status()
     names = []
     for href in re.findall(r'href="([^"]+)"', resp.text):
@@ -723,17 +735,18 @@ def download_file(url: str, dest: Path, overwrite: bool = False,
     Download url to dest. Returns 'downloaded' or 'skipped'; raises
     DownloadError if the file could not be fetched intact.
 
-    An existing file is kept if its size matches the server's (with
-    verify, only if it also decompresses cleanly); if the server gives no
-    size, only if it decompresses cleanly. New data go to <dest>.part and
-    are renamed only when complete and intact.
+    New data go to <dest>.part and are renamed only when complete and
+    intact, so a file under its real name was complete when written: it is
+    kept without asking the server. With verify, it is kept only if its
+    size matches the server's and it decompresses cleanly -- for files put
+    there some other way, or to look for damage.
     """
     if dest.exists() and not overwrite:
-        remote = get_remote_size(url)
-        local = dest.stat().st_size
-        if remote == local and (not verify or gz_intact(dest)):
+        if not verify:
             return "skipped"
-        if remote is None and gz_intact(dest):
+        remote = get_remote_size(url)
+        if (remote is None or remote == dest.stat().st_size) \
+                and gz_intact(dest):
             return "skipped"
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.name + ".part")
@@ -755,9 +768,13 @@ def download_file(url: str, dest: Path, overwrite: bool = False,
                 os.replace(part, dest)
                 return "downloaded"
             except requests.HTTPError as exc:
-                problem = f"HTTP {exc.response.status_code}"
-                if exc.response.status_code == 404:
+                status = exc.response.status_code
+                problem = f"HTTP {status}"
+                if status == 404:
                     break  # no point retrying
+                if status in _RETRY_STATUS and attempt < retries:
+                    time.sleep(_BACKOFF[min(attempt, len(_BACKOFF)) - 1])
+                    continue
             except (requests.RequestException, DownloadError, OSError) as exc:
                 problem = str(exc) or exc.__class__.__name__
             if attempt < retries:
@@ -786,20 +803,31 @@ def download_obsid(obsid: str, outdir: Path, meta: dict | None,
                               "not found at HEASARC or UKSSDC"))
         return res
     res["found"], res["url"] = True, base
+    mirror = f"{UKSSDC_DATA_BASE}/{obsid}/"
     for prod in products:
         prod_url = base + prod + "/"
-        try:
-            names = list_remote_dir(prod_url)
-        except requests.HTTPError as exc:
-            if exc.response is not None and exc.response.status_code == 404:
+        names, problem = None, None
+        for attempt_base in [base] + ([mirror] if base != mirror else []):
+            prod_url = attempt_base + prod + "/"
+            try:
+                names = list_remote_dir(prod_url)
+                if attempt_base != base:
+                    res["notes"].append(f"{prod} from UKSSDC ({problem})")
+                break
+            except requests.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None \
+                    else None
+                if status == 404:
+                    break  # the folder doesn't exist here: nothing to fetch
+                problem = f"listing failed: {exc}"
+            except requests.RequestException as exc:
+                problem = f"listing failed: {exc}"
+        if names is None:
+            if problem:
+                res["failed"].append((prod + "/", problem))
+            elif prod != "uvot/event":
                 # uvot/event exists only when an exposure was in event mode
-                if prod != "uvot/event":
-                    res["notes"].append(f"no {prod} folder in the archive")
-            else:
-                res["failed"].append((prod + "/", f"listing failed: {exc}"))
-            continue
-        except requests.RequestException as exc:
-            res["failed"].append((prod + "/", f"listing failed: {exc}"))
+                res["notes"].append(f"no {prod} folder in the archive")
             continue
         local_dir = outdir / obsid / prod
         for fname in names:
@@ -1070,10 +1098,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Re-download files even if they are already there "
                         "and intact.")
     p.add_argument("--verify", action="store_true",
-                   help="Also decompress files that are already there to "
-                        "check them (slower: ~5 min for all of 3C 273); "
-                        "by default a size match with the server is enough. "
-                        "New downloads are always checked.")
+                   help="Check files that are already there: same size as "
+                        "on the server and decompressing cleanly (slow: "
+                        "~5 min for all of 3C 273). By default they are "
+                        "kept, since this script renames a file into place "
+                        "only after checking it. New downloads are always "
+                        "checked.")
     return p
 
 

@@ -31,6 +31,7 @@ nav:
   - Home: index.md
   - 1. Setup: 01-setup.md
   - 2. Download data: 02-download.md
+  - 3. Inventory: 03-inventory.md
 
 markdown_extensions:
   - tables

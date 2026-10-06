@@ -95,3 +95,49 @@ Logged during **Step 2** (download; branch `step2-download`).
   (connection reuse) brought it to 1.7 min. The XRT downloader opens a new
   connection per request too. Decompressing every existing file to check it
   added ~5 min, so that is now `--verify`; new downloads are always checked.
+
+Logged during **Step 3** (inventory; branch `step3-inventory`).
+
+- **astropy and truncated .gz files:** `fits.open` on a truncated `.gz` sky
+  image raised nothing and showed only the primary header, so an inventory
+  that trusted `len(hdul)` would have dropped all its exposures without a
+  word. The inventory now decompresses each `.gz` completely with `gzip`
+  first (which raises on a truncation or a bad checksum) and parses the
+  bytes; that was also twice as fast (37 s instead of 84 s for 3C 273). Later
+  steps that open sky images with astropy should do the same (or run after
+  the inventory has passed). CFITSIO-based HEASoft tools may behave
+  differently; not checked.
+- **The catalog's per-filter exposure is on-time** (before the dead-time
+  correction): `ONTIME` sums match it, `EXPOSURE` sums are 1.6 % lower at
+  11 ms frames and 4.8 % at 3.6 ms.
+- **Archive gaps the file-level check can't see:** in 6 of 1,552 3C 273
+  observation/filter pairs the catalog has more on-time than the sky images;
+  for 00050900031 UVW1 HEASARC's exposure log (`swiftuvlog`) lists an
+  exposure with extension `UNDEF` (1,082 s) that is in no sky image.
+- **No image/event duplicates** (same `EXPID`) in any 3C 273 sky image, and no
+  `OBS_MODE=SETTLING` extensions: the archive's sky images seem to hold one
+  extension per exposure, pointing only. The checks stay (cheap) for other
+  targets.
+- **A 0.01 s exposure with a broken WCS** (00035017011, `bb156516976I`): the
+  source maps to pixel (−20644, −15564). Classified `not_covered`, with the
+  reason noting the tiny exposure.
+- **Downloader, found while re-running Step 2 on all of 3C 273:** a no-op
+  re-run that asked the server about every file (~100 requests/s with
+  connection reuse) got HTTP 403 for 105 observations' folders. Fixed in
+  this branch: files already on disk are kept without asking (this script
+  only renames checked files into place; `--verify` still checks them),
+  403/429/5xx are retried after 5, 15 and 45 s, and a folder HEASARC keeps
+  refusing comes from the UKSSDC mirror. A no-op re-run now takes 56 s.
+- Inventory tests (clean run with rows == extensions, truncated sky image and
+  exposure map, missing exposure map, reasons read back) are in
+  `_dev_internal/step3_smoke/test_inventory.sh`.
+- **Which snapshot openers are trailed** (measured on all 2,886 3C 273
+  candidates: second-moment axis ratio and centroid offset of the source):
+  event-mode openers 82 % (axis ratio > 1.3 or offset > 2″; median ratio
+  1.72, offset 2.9″, N=189); image-mode openers 5–7 %, the same as other
+  exposures (2–6 %), consistent with UVOT's on-board drift correction
+  ("shift-and-add") in image mode. So the inventory's summary counts the
+  event-mode openers separately. Uncorrected aspect (`ASPCORR=NONE`) is
+  almost entirely event mode (89 %) and UV images in the 5′ windows (84 %);
+  full-frame image-mode exposures are 99 % corrected; most uncorrected
+  exposures are still within ~1.3″ of the source (90 %).
