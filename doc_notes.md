@@ -278,3 +278,37 @@ Logged during **Step 5** (photometry; branch `step5-photometry`).
   a refused background region, a carried `no_background`, serial ==
   parallel, `--plot-only` without HEASoft) are in
   `_dev_internal/step5_smoke/test_photometry.sh`.
+
+Logged during **Step 6** (master table; branch `step6-master-table`).
+
+- **Jitter dates, from the circulars:** GCN 34633 (2023-09-06) asks users to
+  check UVOT data "starting ~ August 7" (gyro #1 noise, degraded attitude
+  control). GCN 36033 (2024-04-05): two-gyro flight software, UVOT
+  re-enabled on 4 April 2024; "the trailed point spread functions seen in
+  some UVOT images during the last 6 months should be largely mitigated";
+  and "the team is developing software updates to correct affected event
+  mode data taken during this period" — worth checking before building
+  event re-imaging (Step 3b). The rule uses 2023-08-07 to 2024-04-04.
+- **Calibration** (3C 273; scripts in `_dev_internal/step6_calibration/`):
+  same-snapshot 11 ms / 3.6 ms pairs (473) for coincidence loss; rate /
+  median of clean same-observation exposures for shape, patches and
+  centring. The numbers are in docs/06-master-table.md. Two surprises:
+  UVW2 at 0.955–0.96 counts/frame (13 exposures, all 2005) reads 13–39 %
+  high, and unsaturated full-frame U at 0.93–0.98 reads 8 % low against
+  windowed U (which is itself corrected by a factor ~1.9, so the absolute
+  U level is still open).
+- **U loses 2017–2022:** those years have only full-frame U, all at
+  0.95–0.98 counts/frame, excluded by the 0.90 limit. Readout-streak
+  photometry (Page et al. 2013) is the way to recover them; to do.
+- **Significance needs both errors.** I first flagged same-snapshot pairs
+  as 11–13σ discrepant using one exposure's error; with both errors
+  combined they are 2.3–3.3σ (expected among ~470 pairs). The short
+  full-frame member's binomial error may also be optimistic at high counts
+  per frame. The `discrepant` flag uses the combined error and needs 10 %
+  and 5σ; none for 3C 273.
+- **Step 4 follow-up:** 3 non-trailed U exposures have centroids 3.2–3.35″
+  from the source (pointing errors without aspect correction), so Step 4
+  left their regions at the catalogue position and Step 6 excludes them
+  (`off_centre`). Centring compact sources (concentration ≥ 0.78, axis
+  ratio ≤ 1.5) up to ~5″ away would keep them. Minor; to do.
+- Step 6 tests are in `_dev_internal/step6_smoke/test_master_table.sh`.
