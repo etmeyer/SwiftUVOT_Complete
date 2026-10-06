@@ -20,7 +20,7 @@ make_uvot_master_table.py
 | ---- | ------- |
 | `--outdir` | Steps 3–5's output folder (default `UVOT_output`) |
 | `--sss-level` | Exclude exposures on a low-sensitivity patch at this level or a stricter one: `LOW` (default), `MID` or `HIGH` |
-| `--coincidence-limit FILTER=VALUE` | Change a filter's counts-per-frame limit (default U 0.90, others 0.95); can be repeated |
+| `--coincidence-limit FILTER=VALUE` | Change a filter's counts-per-frame limit (default 0.95; U only at the saturation cap, 0.98); can be repeated |
 
 ## How it works
 
@@ -32,7 +32,7 @@ come from the 3C 273 data, as described below.
 | `step3:<status>` | exposures that were not candidates in Step 3 (`not_covered`, `partial`, ...) | no usable image of the source |
 | `step4:<status>`, `step5:failed` | exposures without regions or photometry | nothing to use |
 | `saturated` | more than 0.98 counts per frame | `uvotsource` caps the rate: it is only a lower limit |
-| `coincidence` | above the filter's limit: U 0.90, others 0.95 counts per frame | the coincidence-loss correction goes wrong below the cap: full-frame U above 0.93 reads 8 % low, UVW2 above 0.95 reads 13–39 % high |
+| `coincidence` | above 0.95 counts per frame (U: not used, see `high_coi`) | the coincidence-loss correction goes wrong below the cap: UVW2 above 0.95 reads 13–39 % high |
 | `sss` | on a low-sensitivity patch at `--sss-level` (LOW) | rates 5 % low on average, 29 % of them more than 10 % low |
 | `off_centre` | source found more than 3″ from the region centre, so Step 4 left the region at `--ra`/`--dec` | the region misses the source: rates 0.30 of the truth |
 | `smeared` | concentration (5″/15″ counts, Step 4) below 0.78 | light outside the 5″ region: 3 % low at 0.75–0.78, far more below |
@@ -50,6 +50,9 @@ other.
 
 - `sss_mid` and `sss_high`: on a patch only at a level the rule doesn't exclude.
 - `jitter_ok`: taken during the jitter, but the PSF check passed.
+- `high_coi`: U above 0.90 counts per frame. Kept, because for a bright
+  source full-frame U is often the only U there is, but probably about 8 %
+  low (full-frame U above 0.93 against windowed U of the same snapshot).
 - `no_aspcorr`: no aspect correction; the region is centred on the source.
 - `short`: exposure under 20 s.
 - `discrepant`: the rate differs from the error-weighted mean of the rest of
@@ -136,47 +139,51 @@ exposures. Dotted lines mark the limits.*
 For all of 3C 273:
 
 ```
-[summary] 2935 exposures: 1955 included, 980 excluded
+[summary] 2935 exposures: 2091 included, 844 excluded
           filter  exposures  included  included exposure (s)
           V             487       440                  36365
           B             197       141                  11555
-          U             505       138                  14545
+          U             505       274                  48337
           UVW1          528       419                  83164
           UVM2          571       442                 102181
           UVW2          647       375                 154788
 [summary] exposures per rule (one exposure can break several):
-          sss                        385, rate 0.92 of the included median (116 with one)
-          coincidence                228, rate 0.95 of the included median (43 with one)
-          smeared                    201, rate 0.43 of the included median (132 with one)
-          saturated                  176, rate 0.85 of the included median (101 with one)
-          elongated                  159, rate 0.40 of the included median (125 with one)
+          sss                        385, rate 0.94 of the included median (125 with one)
+          smeared                    201, rate 0.45 of the included median (136 with one)
+          saturated                  176, rate 0.86 of the included median (107 with one)
+          elongated                  159, rate 0.42 of the included median (128 with one)
           off_centre                 104, rate 0.30 of the included median (83 with one)
+          coincidence                 61, rate 1.16 of the included median (17 with one)
           step3:not_covered           41
           jitter                       6
           step3:partial                3
-[summary] flags on included exposures: jitter_ok 18, no_aspcorr 729, short 399, sss_high 91, sss_mid 183
-[check] included exposures that differ from the rest of their observation by more than 10 % and 5 sigma: 0
+[summary] flags on included exposures: discrepant 1, high_coi 136, jitter_ok 20, no_aspcorr 744, short 420, sss_high 106, sss_mid 218
+[check] included exposures that differ from the rest of their observation by more than 10 % and 5 sigma: 1
+          00089029001 U     uu615761377I rate 338.332 +- 2.34
 ```
 
 "Rate ... of the included median" compares each excluded exposure with the
 included exposures of its observation and filter, where there are any. The
-included exposures add up to 66 % of the measured exposure time.
+included exposures add up to 72 % of the measured exposure time. The one
+`discrepant` U exposure (00089029001, 0.952 counts per frame) reads 14 %
+below the rest of its observation: the steep end of the coincidence
+correction.
 
 ## What to look for
 
-- **U.** Only 138 of 505 U exposures remain, nearly all with 3.6 ms frames.
-  From 2017 to 2022 there are only full-frame U exposures, all at 0.95–0.98
-  counts per frame, so U has no points then. A looser limit such as
-  `--coincidence-limit U=0.97` brings some back, at the cost of a bias of
-  about 8 %.
+- **U.** 274 of 505 U exposures are included; 136 of them are flagged
+  `high_coi` (full-frame, 0.90–0.98 counts per frame, probably about 8 %
+  low). They are all the U there is from 2017 to 2022. Step 7 keeps the
+  flag on the combined points. To leave them out instead, use
+  `--coincidence-limit U=0.90`.
 - **UVW2.** Most of its exclusions are the trailed event-mode snapshot
   openers of 2009–2016 (`off_centre`, `elongated`, `smeared`).
-- **Only saturated.** For 25 observation/filter pairs (all U) every measured
+- **Only saturated.** For 23 observation/filter pairs (all U) every measured
   exposure is saturated. Step 7 reports those as lower limits.
-- **The jitter period.** 18 of 3C 273's 81 exposures from it are included.
+- **The jitter period.** 20 of 3C 273's 81 exposures from it are included.
   The rest are smeared (31), on a patch (10), off centre (8), elongated (6),
-  without a measurable PSF (6), or above the counts-per-frame limit (2).
-- **`discrepant` flags:** none for 3C 273. If there are any, look at them in
+  or without a measurable PSF (6).
+- **`discrepant` flags:** one for 3C 273 (above). Look at such exposures in
   the Step 4 viewer (`swift_uvot_viewer.py --obsid ...`) and exclude them
   with an override if the image is bad.
 
@@ -214,8 +221,8 @@ UVOT_output/
 # Also exclude exposures on a MID-level patch
 make_uvot_master_table.py --sss-level MID
 
-# A looser U limit (biased, see above)
-make_uvot_master_table.py --coincidence-limit U=0.97
+# Exclude full-frame U above 0.90 counts per frame instead of flagging it
+make_uvot_master_table.py --coincidence-limit U=0.90
 
 # The included exposures of one filter (include is column 29)
 awk '$1 == "obsid" || ($2 == "UVW1" && $29 == "yes")' UVOT_output/uvot_master_table.txt | less -S

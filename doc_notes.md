@@ -297,9 +297,11 @@ Logged during **Step 6** (master table; branch `step6-master-table`).
   high, and unsaturated full-frame U at 0.93–0.98 reads 8 % low against
   windowed U (which is itself corrected by a factor ~1.9, so the absolute
   U level is still open).
-- **U loses 2017–2022:** those years have only full-frame U, all at
-  0.95–0.98 counts/frame, excluded by the 0.90 limit. Readout-streak
-  photometry (Page et al. 2013) is the way to recover them; to do.
+- **U in 2017–2022** is only full-frame, all at 0.95–0.98 counts/frame.
+  First excluded by a 0.90 limit; at the user's request (2026-10-06) U is
+  now kept up to saturation and flagged `high_coi` above 0.90 (about 8 %
+  low). Readout-streak photometry (Page et al. 2013) is the clean fix; to
+  do.
 - **Significance needs both errors.** I first flagged same-snapshot pairs
   as 11–13σ discrepant using one exposure's error; with both errors
   combined they are 2.3–3.3σ (expected among ~470 pairs). The short

@@ -22,10 +22,11 @@ documentation):
     step4:<status>  no regions from Step 4 (no_background, failed)
     step5:failed    uvotsource failed
     saturated       above 0.98 counts per frame: the rate is a lower limit
-    coincidence     above the filter's counts-per-frame limit (U 0.90,
-                    others 0.95). Full-frame U above 0.93 reads 8 % low
-                    against the windowed exposure of the same snapshot,
-                    UVW2 above 0.95 13-39 % high.
+    coincidence     above the filter's counts-per-frame limit (0.95; U
+                    only at the saturation cap, but flagged high_coi above
+                    0.90). UVW2 above 0.95 reads 13-39 % high; full-frame
+                    U above 0.93 reads 8 % low against the windowed
+                    exposure of the same snapshot.
     sss             on a low-sensitivity patch at --sss-level (default
                     LOW: 5 % low on average; MID-only patches 1 %)
     off_centre      the source was found more than 3" from the region
@@ -38,8 +39,9 @@ documentation):
     override:N      excluded by line N of uvot_overrides.txt
 
 Flags (noted, not excluding): sss_mid / sss_high (patch at a level the rule
-does not exclude), jitter_ok (jitter period, PSF check passed), no_aspcorr,
-short (exposure under 20 s), discrepant (differs from the rest of its
+does not exclude), jitter_ok (jitter period, PSF check passed), high_coi
+(U above 0.90 counts per frame: about 8 % low), no_aspcorr, short
+(exposure under 20 s), discrepant (differs from the rest of its
 observation by more than 10 % and 5 sigma), override:N (included by line N,
 despite the rules listed).
 
@@ -69,8 +71,13 @@ import swift_uvot_env as uenv
 from swift_uvot_tables import read_table, write_table
 
 SATURATION = 0.98               # uvotsource caps counts per frame here
-COINCIDENCE_LIMIT = {'U': 0.90}  # counts per frame; other filters:
+# Counts per frame above which an exposure is excluded; other filters:
+# DEFAULT_COINCIDENCE_LIMIT. U is kept up to the saturation cap, because
+# for bright sources full-frame U is often all there is, but flagged above
+# COI_FLAG_LIMIT: it reads about 8 % low there (3C 273).
+COINCIDENCE_LIMIT = {'U': SATURATION}
 DEFAULT_COINCIDENCE_LIMIT = 0.95
+COI_FLAG_LIMIT = {'U': 0.90}
 CONC_MIN = 0.78                 # 5"/15" counts: 3 % low at 0.75-0.78
 AXIS_RATIO_MAX = 1.5            # 5-12 % low above 1.5
 SHORT_EXPOSURE = 20.0           # s
@@ -151,6 +158,8 @@ def judge(inv, pos, phot, sss_level, limits):
         rules.append('saturated')
     elif cpf > limits.get(inv['filter'], DEFAULT_COINCIDENCE_LIMIT):
         rules.append('coincidence')
+    elif cpf > COI_FLAG_LIMIT.get(inv['filter'], 2.0):
+        flags.append('high_coi')
     worst = SSS_LEVELS.index(sss_level)
     on_patch = [lvl for lvl in SSS_LEVELS
                 if _num(pos['sss_%s' % lvl.lower()]) <= 0]
@@ -377,7 +386,7 @@ def main(argv=None):
     parser.add_argument('--coincidence-limit', action='append', default=[],
                         metavar='FILTER=VALUE',
                         help='counts-per-frame limit for a filter (default: '
-                             'U 0.90, others 0.95); can be repeated')
+                             '0.95, U %.2f); can be repeated' % SATURATION)
     args = parser.parse_args(argv)
     limits = {f: COINCIDENCE_LIMIT.get(f, DEFAULT_COINCIDENCE_LIMIT)
               for f in FILTERS}

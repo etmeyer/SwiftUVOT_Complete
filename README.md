@@ -168,7 +168,7 @@ swift_uvot_photometry.py [--outdir UVOT_output] [--nproc 8] [--plot-only]
 
 Joins Steps 3–5 into one row per exposure and decides by rule which ones the
 light curve uses (`include` yes/no, with the rules that excluded each):
-saturated, above the filter's counts-per-frame limit (U 0.90, others 0.95),
+saturated, above 0.95 counts per frame (U: kept up to saturation but flagged above 0.90),
 on a LOW low-sensitivity patch, source off the region centre, smeared
 (concentration < 0.78), elongated (axis ratio > 1.5), no measurable PSF
 during the 2023–24 spacecraft jitter, duplicate exposure. The limits were
