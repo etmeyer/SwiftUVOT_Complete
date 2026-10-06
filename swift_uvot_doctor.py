@@ -351,7 +351,7 @@ def check_test_image(spec, ra=None, dec=None):
               "bkgreg": "bkg.reg", "sigma": 3, "apercorr": "NONE",
               "history": "no", "outfile": "phot.fits", "clobber": "yes",
               "chatter": 1}
-    expmap = path.replace("_sk.img", "_ex.img")
+    expmap = re.sub(r"_sk(_\d+)?\.img", r"_ex\1.img", path)
     if expmap != path and os.path.isfile(expmap):
         inputs["ex.img.gz"] = expmap
         params["expfile"] = "ex.img.gz[%d]" % ext

@@ -2,9 +2,10 @@
 """
 swift_uvot_inventory.py -- Step 3: an inventory of every UVOT exposure.
 
-A UVOT sky image (sw<OBSID>u<filter>_sk.img.gz) holds one FITS extension
-per exposure, and the exposures in one file can differ in frame time,
-window, data mode and aspect correction. This step opens every extension
+A UVOT sky image (sw<OBSID>u<filter>_sk.img.gz, plus _sk_01.img.gz and so
+on when the archive split a long observation's event data) holds one FITS
+extension per exposure, and the exposures in one file can differ in frame
+time, window, data mode and aspect correction. This step opens every extension
 of every sky image under --indir and records, for each:
 
   * what it is: filter, data mode (IMAGE, EVENT, IMAGEEVENT), OBS_MODE,
@@ -32,8 +33,9 @@ ledger (each later step accounts for every extension it was given):
     no_expmap     no exposure-map extension with the same name
     unreadable    the file or extension could not be read
 
-The step reads only FITS files (no HEASoft). With the catalog it also
-compares each OBSID's exposure per filter with the Swift master catalog.
+The step reads only FITS files (no HEASoft). With network it also checks
+that every exposure in HEASARC's UVOT exposure log has a sky image, and
+lists the Swift master catalog's exposure per OBSID and filter.
 
 Output (in --outdir):
     uvot_inventory.txt           one row per extension
@@ -94,7 +96,27 @@ COLUMNS = ['obsid', 'filter', 'hdu', 'extname', 'mode', 'obs_mode', 'expid',
            'off_pnt', 'src_cover', 'bkg_cover', 'clearance', 'dup_of', 'event',
            'procver', 'file', 'status', 'reason']
 
-_SKY_NAME = re.compile(r'^sw(\d{11})u([a-z0-9]{2})_sk\.img(\.gz)?$')
+# A long event-mode observation can have a second sky image, _sk_01.img.gz,
+# made from a second event file (_uf_01.evt.gz).
+_SKY_NAME = re.compile(r'^sw(\d{11})u([a-z0-9]{2})_sk(_\d+)?\.img(\.gz)?$')
+
+
+def expmap_path(sky_path):
+    """The exposure map of a sky image (..._ex[_NN].img.gz)."""
+    head, name = os.path.split(sky_path)
+    return os.path.join(head, re.sub(r'_sk(_\d+)?\.img', r'_ex\1.img', name))
+
+
+def _loss(header):
+    """Summed data-loss keywords (s), or '-' if they make no sense."""
+    try:
+        loss = sum(float(header.get(k, 0) or 0)
+                   for k in ('TOSSLOSS', 'STALLOSS', 'BLOCLOSS'))
+    except (TypeError, ValueError):
+        return '-'
+    # one 3C 273 header has STALLOSS = 4e252
+    return ('%.1f' % loss if 0 <= loss <= header['TSTOP'] - header['TSTART']
+            else '-')
 
 
 def _coverage(expmap, header, src):
@@ -160,7 +182,7 @@ def inventory_file(sky_path, ra, dec):
     filt = FILTER_NAMES.get(code, code.upper())
     base = {'obsid': obsid, 'filter': filt, 'file': sky_path}
     src = SkyCoord(ra, dec, unit='deg')
-    ex_path = sky_path.replace('_sk.img', '_ex.img')
+    ex_path = expmap_path(sky_path)
     rows = []
     try:
         sky = _open_fits(sky_path)
@@ -201,8 +223,7 @@ def inventory_file(sky_path, ra, dec):
                                      h.get('WINDOWDY', '?')),
                 'binning': h.get('BINX', '-'),
                 'aspcorr': str(h.get('ASPCORR', 'NONE')).split()[0],
-                'loss': '%.1f' % sum(float(h.get(k, 0) or 0) for k in
-                                     ('TOSSLOSS', 'STALLOSS', 'BLOCLOSS')),
+                'loss': _loss(h),
             })
             row['date_mid'], row['mjd_mid'] = _date_mid(h)
             try:
@@ -212,6 +233,8 @@ def inventory_file(sky_path, ra, dec):
                 row['off_pnt'] = '-'
 
             reasons = []
+            if row['loss'] == '-':
+                reasons.append('data-loss keywords out of range')
             if filt not in PHOTOMETRIC:
                 status = 'nonphot'
                 reasons.append('%s is not a photometric filter' % filt)
@@ -299,6 +322,16 @@ def catalog_exposures(obsids):
     return query_swift_master_obsids(sorted(obsids))
 
 
+def exposure_log(obsids):
+    """HEASARC's UVOT exposure log for these OBSIDs, or None on failure."""
+    try:
+        from swift_uvot_download import query_uvot_exposure_log
+    except ImportError as exc:
+        print('[warn] cannot query the exposure log (%s)' % exc)
+        return None
+    return query_uvot_exposure_log(sorted(obsids))
+
+
 def read_download_report(indir):
     """{obsid: status} from Step 2's download_report.txt, if present."""
     path = os.path.join(indir, 'download_report.txt')
@@ -381,13 +414,13 @@ def main(argv=None):
     parser.add_argument('--nproc', type=int, default=8,
                         help='files read at once (default: 8)')
     parser.add_argument('--no-catalog', action='store_true',
-                        help="don't compare with the Swift master catalog "
-                             "(no network needed)")
+                        help="don't compare with HEASARC's master catalog "
+                             "and exposure log (no network needed)")
     args = parser.parse_args(argv)
 
     sky_files = sorted(
         p for p in glob.glob(os.path.join(args.indir, '*', 'uvot', 'image',
-                                          'sw*_sk.img*'))
+                                          'sw*_sk*.img*'))
         if _SKY_NAME.match(os.path.basename(p)))
     if not sky_files:
         print('ERROR: no sky images (*/uvot/image/sw*_sk.img.gz) under %s'
@@ -418,6 +451,7 @@ def main(argv=None):
                              if r.get('tstart') not in (None, '-') else 0))
 
     catalog = {} if args.no_catalog else catalog_exposures(by_obsid)
+    log = None if args.no_catalog else exposure_log(by_obsid)
     compact = compact_rows(rows, catalog)
     downloads = read_download_report(args.indir)
 
@@ -467,7 +501,7 @@ def main(argv=None):
                 '%s %d' % (s, v) for s, v in n.items() if v)))
     # Only event-mode openers tend to be trailed: image mode is corrected
     # for drift on board, but the archive builds an event-mode sky image
-    # with one pointing for the whole exposure (82 % of 3C 273's 189).
+    # with one pointing for the whole exposure (80 % of 3C 273's 194).
     openers = [r for r in rows if r['status'] == 'candidate'
                and r.get('first') == 'yes']
     event_openers = sum(1 for r in openers
@@ -488,20 +522,22 @@ def main(argv=None):
         print('[warn] Step 2 reported problems for %d OBSID(s): %s -- see '
               '%s/download_report.txt' % (len(bad_dl), ' '.join(bad_dl[:8]),
                                           args.indir))
-    if catalog:
-        # The catalog's per-filter exposure is the sum of ONTIME (before the
-        # dead-time correction that EXPOSURE has).
-        off = [c for c in compact if c.get('cat_exp_s')
-               and abs(float(c['ontime_s']) - float(c['cat_exp_s']))
-               > max(10.0, 0.02 * float(c['cat_exp_s']))]
-        print('[check] on-time per OBSID and filter vs the catalog: %d of %d '
-              'differ by more than 2%% (and 10 s)' % (len(off), len(compact)))
-        for c in off[:20]:
-            print('          %s %-5s inventory %s s, catalog %s s' % (
-                c['obsid'], c['filter'], c['ontime_s'], c['cat_exp_s']))
-        if off:
-            print('          (usually an exposure the archive has no sky '
-                  'image for)')
+    if log is not None:
+        # Every exposure HEASARC logged should have a sky image. (The master
+        # catalog's per-filter totals are no test: they sometimes differ
+        # with nothing missing, e.g. elapsed time in IMAGEEVENT mode.)
+        have = {(r['obsid'], r['filter'], r['extname']) for r in rows}
+        filters = {r['filter'] for r in rows}
+        logged = [(o, f, ext, expo) for (o, f), entries in sorted(log.items())
+                  if o in by_obsid and f in filters
+                  for ext, expo in entries]
+        missing = [e for e in logged if e[:3] not in have]
+        print('[check] exposure log (swiftuvlog): %d of %d logged exposures '
+              'have a sky image' % (len(logged) - len(missing), len(logged)))
+        for o, f, ext, expo in missing[:20]:
+            print('          missing: %s %-5s %s (%.0f s)%s' % (
+                o, f, ext, expo, ', logged without an image'
+                if ext == 'UNDEF' else ''))
     print('[summary] Written: %s, %s' % (inv_path, compact_path))
     if counts['unreadable']:
         print('ERROR: %d extension(s) could not be read; re-run Step 2 for '

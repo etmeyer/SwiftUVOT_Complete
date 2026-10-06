@@ -9,8 +9,8 @@ pipeline's ledger, in which every exposure is accounted for until the light
 curve. It changes nothing in `UVOT_input`.
 
 It reads only FITS files, so it runs in either terminal (Python with
-`astropy`; no HEASoft). All of 3C 273 — 2,930 exposures in 1,552 sky images
-— takes about 40 seconds with `--nproc 8`.
+`astropy`; no HEASoft). All of 3C 273 — 2,935 exposures in 1,553 sky images
+— takes under a minute with `--nproc 8`.
 
 ## What runs
 
@@ -24,7 +24,7 @@ swift_uvot_inventory.py --ra 187.2779 --dec 2.0524
 | `--indir` | Step 2's folder (default `UVOT_input`) |
 | `--outdir` | Where the tables go (default `UVOT_output`) |
 | `--nproc` | Files read at once (default 8) |
-| `--no-catalog` | Skip the comparison with the Swift master catalog (no network needed) |
+| `--no-catalog` | Skip the exposure-log check and the master catalog's exposures (no network needed) |
 
 ## How it works
 
@@ -32,7 +32,11 @@ swift_uvot_inventory.py --ra 187.2779 --dec 2.0524
 `sw<OBSID>u<filter>_sk.img.gz` holds one extension per exposure in that
 filter, named after the filter and the exposure's start, e.g.
 `uu387398273I` (`I`: image mode; `E`: an image built from event-mode data).
-The exposure map `*_ex.img.gz` has an extension of the same name. Exposures in
+The exposure map `*_ex.img.gz` has an extension of the same name. When the
+archive split a long observation's event data into two event files
+(`*_uf.evt.gz` and `*_uf_01.evt.gz`), there is a second sky image,
+`*_sk_01.img.gz`, with its own exposure map; the inventory reads both
+(3C 273 has one, in 00089771001: 5 more UVM2 exposures). Exposures in
 one file can differ in frame time, window, data mode and aspect correction:
 in 3C 273's 2009–2016 observations, each filter has a short exposure with
 11.0 ms frames followed by a longer one with 3.6 ms frames (a hardware
@@ -50,7 +54,7 @@ window), which is what keeps 3C 273 below saturation.
 | `exposure`, `ontime` | Exposure with and without the dead-time correction (s) |
 | `frametime`, `window`, `binning` | CCD frame time (s), science window (raw pixels), on-board binning |
 | `aspcorr` | `DIRECT` if the pointing was corrected with field stars, `NONE` if not |
-| `loss` | Time lost to telemetry/DPU stalls/filter blocking (s) |
+| `loss` | Time lost to telemetry/DPU stalls/filter blocking (s); `-` if the keywords make no sense (one 3C 273 header has `STALLOSS` = 4×10²⁵²) |
 | `snapshot`, `first` | Snapshot number (exposures less than 5 min apart) and whether this exposure opens it |
 | `off_pnt` | Pointing offset from your source (arcmin) |
 | `src_cover`, `bkg_cover` | Fraction of the 5″ source circle and of the 27.5–35″ background annulus that is fully exposed |
@@ -79,15 +83,16 @@ file with the pointing at each photon's time is compact. Measured on all of
 
 | Exposures | Number | Median axis ratio | Median offset | Trailed or offset* |
 | --------- | ------ | ----------------- | ------------- | ------------------ |
-| Event mode, opening a snapshot | 189 | 1.72 | 2.9″ | 82 % |
-| Event mode, other | 531 | 1.06–1.08 | 0.6″ | 0–1 % |
-| Image mode, opening a snapshot | 430 | 1.07–1.08 | 0.2–0.8″ | 5–7 % |
-| Image mode, other | 1,685 | 1.06–1.08 | 0.3–0.4″ | 2–6 % |
+| Event mode, opening a snapshot | 194 | 1.89 | 3.1″ | 80 % |
+| Event mode, other | 531 | 1.07 | 0.6″ | 0.6 % |
+| Image mode, opening a snapshot | 430 | 1.08 | 0.2″ | 5 % |
+| Image mode, other | 1,736 | 1.07 | 0.3″ | 5 % |
 
 \*axis ratio of the source above 1.3 or centroid more than 2″ from the
-catalogue position. In 2009–2016 each snapshot opened with a short UVW2 or
-UVW1 event-mode exposure. The inventory marks openers with `first` and
-counts the event-mode ones; Step 4 measures every exposure's shape.
+catalogue position (measured in [Step 4](04-positions.md)). In 2009–2016
+each snapshot opened with a short UVW2 or UVW1 event-mode exposure. The
+inventory marks openers with `first` and counts the event-mode ones; Step 4
+measures every exposure's shape.
 
 **Statuses.** Every extension gets exactly one:
 
@@ -106,13 +111,16 @@ patches are not judged here; they need the photometry and images of
 Steps 4–6. The inventory deliberately measures no brightness, so each
 quantity comes from one place.
 
-**The catalog check.** For each observation and filter, the summed on-time
-(before dead-time correction, as the catalog counts it) is compared with the
-Swift master catalog. A difference of more than 2 % usually means an exposure
-the archive lists but has no sky image for. Step 2's check can't see that,
-because the file exists. In 3C 273, six observation/filter pairs differ; for
-00050900031 UVW1, HEASARC's exposure log lists a tenth exposure of 1,082 s
-(extension name `UNDEF`) that is in no sky image.
+**The exposure-log check.** HEASARC's UVOT exposure log (`swiftuvlog`)
+lists every exposure with its extension name. The inventory checks that each
+logged exposure, in the filters you downloaded, has a sky image — Step 2's
+check can't see a missing exposure, because the file exists. In 3C 273, 2,935
+of 2,936 logged exposures have one; the exception, in 00050900031 UVW1, is
+logged with the extension name `UNDEF` (1,082 s) and is in no sky or raw
+image. The compact table also lists the master catalog's on-time per filter
+(`cat_exp_s`). It is not a test: in 4 of 3C 273's 1,552 observation/filter
+pairs it is 9–11 % above the sky images' on-time with nothing missing (once
+because it counts the elapsed time of an `IMAGEEVENT` observation).
 
 The run prints one row per observation and filter (also saved as
 `uvot_inventory_compact.txt`), then counts. From the 12-observation test set:
@@ -130,9 +138,8 @@ The run prints one row per observation and filter (also saved as
 [summary] 26 candidates open a snapshot, 10 of them in event mode (often trailed; Step 4 measures them)
 [summary] 0 extensions have an image/event duplicate
 [note] 2 OBSID folder(s) have no sky images: 00035017005 00035017006
-[check] on-time per OBSID and filter vs the catalog: 1 of 44 differ by more than 2% (and 10 s)
-          00050900031 UVW1  inventory 8846 s, catalog 9928 s
-          (usually an exposure the archive has no sky image for)
+[check] exposure log (swiftuvlog): 122 of 123 logged exposures have a sky image
+          missing: 00050900031 UVW1  UNDEF (1082 s), logged without an image
 ```
 
 `aspcorr` counts the exposures: `D2` two `DIRECT`, `N2` two `NONE`. The two
@@ -141,23 +148,24 @@ Step 2 skipped as `no_data`.
 
 ## What to look for
 
-- **`not_covered` and `partial`.** For 3C 273: 44 of 2,930 exposures — 42
-  in pointings of the neighbouring AGN SDSS J122933+015810 (target IDs 91742
-  and 32759, 3–12′ from 3C 273), one 3C 273 observation pointed 8′ away so
-  that the source falls just outside the rotated field, and one 0.01 s
-  exposure (`exposure only 0.01 s`).
+- **`not_covered` and `partial`.** For 3C 273: 44 of 2,935 exposures — 42
+  in pointings of SDSS J122933+015810, an X-ray source 8′ away (target IDs
+  91742 and 32759; 3C 273 6–12′ off-axis), one 3C 273 observation pointed 8′
+  away so that the source falls just outside the rotated field, and one
+  0.01 s exposure (`exposure only 0.01 s`).
 - **Two frame times in one filter** (`frame_ms` `3.6,11.0`). Step 5 measures
   each exposure; for a bright source the 3.6 ms ones are the ones that stay
   below saturation.
-- **`aspcorr` `N`.** 40 % of 3C 273's candidates (1,147 of 2,886) have no
+- **`aspcorr` `N`.** 40 % of 3C 273's candidates (1,151 of 2,891) have no
   field-star correction, nearly all in the UV filters and U. Step 4 measures
   where the source actually is in each.
-- **`first` = `yes` with `mode` `EVENT`:** probably trailed (189 for
-  3C 273, 82 % of them trailed or offset). Image-mode openers are fine.
+- **`first` = `yes` with `mode` `EVENT`:** probably trailed (194 for
+  3C 273, 80 % of them trailed or offset). Image-mode openers are fine.
 - **`bkg_cover` below 1:** the standard background annulus runs off the
   exposed field (11 candidates for 3C 273); Step 4 chooses another
   background region there.
-- **`[check]` lines:** exposures the archive lacks. Nothing to re-download.
+- **`missing:` lines:** exposures HEASARC logged that have no sky image.
+  Nothing to re-download.
 
 ## Inputs and outputs
 
@@ -182,7 +190,7 @@ position, pipeline version, counts).
 # The usual run, from the analysis folder that holds UVOT_input
 swift_uvot_inventory.py --ra 187.2779 --dec 2.0524
 
-# Without network (no catalog comparison)
+# Without network (no exposure-log check)
 swift_uvot_inventory.py --ra 187.2779 --dec 2.0524 --no-catalog
 
 # Look at one observation
@@ -203,8 +211,8 @@ grep 00035017124 UVOT_output/uvot_inventory.txt | less -S
    read, because astropy shows a truncated file as one with fewer
    extensions — exposures would disappear without a word.
 
-4. **The catalog comparison needs network.** Without it (`--no-catalog`) the
-   `cat_exp_s` column stays empty.
+4. **The exposure-log check needs network.** Without it (`--no-catalog`) it
+   is skipped and the `cat_exp_s` column stays empty.
 
 ## Notes
 
