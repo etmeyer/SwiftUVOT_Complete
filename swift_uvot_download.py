@@ -537,6 +537,40 @@ def query_swift_master_obsids(obsids: list[str]) -> dict[str, dict]:
     return rows
 
 
+def query_uvot_exposure_log(obsids: list[str]) -> dict[tuple, list] | None:
+    """
+    HEASARC's UVOT exposure log (swiftuvlog) for the given OBSIDs:
+    {(obsid, filter name): [(extname, exposure s), ...]}, or None if the
+    query failed. Rows for event files (no extension name) are left out;
+    an exposure logged without an image has extname 'UNDEF'.
+    """
+    try:
+        from astropy.io.votable import parse_single_table
+    except ImportError:
+        return None
+    log: dict[tuple, list] = {}
+    for i in range(0, len(obsids), 100):
+        chunk = obsids[i:i + 100]
+        adql = ("SELECT obsid, filter, extname, exposure FROM swiftuvlog "
+                "WHERE obsid IN (%s)" % ",".join("'%s'" % o for o in chunk))
+        try:
+            resp = requests.get(HEASARC_TAP_URL, timeout=120, params={
+                "REQUEST": "doQuery", "LANG": "ADQL", "QUERY": adql})
+            resp.raise_for_status()
+            table = parse_single_table(io.BytesIO(resp.content)).to_table(
+                use_names_over_ids=True)
+        except Exception as exc:  # network, server or parse error
+            print(f"[warn] Exposure-log lookup failed ({exc})")
+            return None
+        for r in table:
+            ext = _cell(r["extname"]).strip()
+            if ext in ("", "EVENTS"):
+                continue
+            key = (_cell(r["obsid"]).strip(), _cell(r["filter"]).strip())
+            log.setdefault(key, []).append((ext, float(r["exposure"])))
+    return log
+
+
 # ---------------------------------------------------------------------------
 # UVOT filters and file selection
 # ---------------------------------------------------------------------------
