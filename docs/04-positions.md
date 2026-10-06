@@ -5,7 +5,7 @@
 exposure, what shape it has, how much of its light falls in the 5″ source
 region, and whether it sits on one of the detector's low-sensitivity
 patches. Then it writes the source and background regions that photometry
-(Step 5, coming) will use. `swift_uvot_viewer.py` shows the exposures worth
+([Step 5](05-photometry.md)) uses. `swift_uvot_viewer.py` shows the exposures worth
 looking at, with their regions drawn on.
 
 Run both in the HEASoft terminal (`setup_swiftuvot; heainit`), from the

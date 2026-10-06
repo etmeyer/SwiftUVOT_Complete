@@ -67,6 +67,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -274,14 +275,26 @@ def run_tool(tool, params=None, inputs=None, outputs=None, dest_dir='.',
     return result
 
 
-def run_many(calls, nproc=1):
+def run_many(calls, nproc=1, progress=None):
     """
     Run many calls, nproc at a time. calls is a list of dicts of run_tool
     keyword arguments (including 'tool'). Returns the CallResults in the
     same order. Each call is isolated as in run_tool, so the order in which
-    they finish does not matter.
+    they finish does not matter. progress, if given, is called as
+    progress(n_done, n_total) after each call.
     """
+    done = [0]
+    lock = threading.Lock()
+
+    def one(call):
+        res = run_tool(**call)
+        if progress:
+            with lock:
+                done[0] += 1
+                progress(done[0], len(calls))
+        return res
+
     if nproc <= 1:
-        return [run_tool(**call) for call in calls]
+        return [one(call) for call in calls]
     with ThreadPoolExecutor(max_workers=nproc) as pool:
-        return list(pool.map(lambda call: run_tool(**call), calls))
+        return list(pool.map(one, calls))
