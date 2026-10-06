@@ -141,3 +141,85 @@ Logged during **Step 3** (inventory; branch `step3-inventory`).
   almost entirely event mode (89 %) and UV images in the 5′ windows (84 %);
   full-frame image-mode exposures are 99 % corrected; most uncorrected
   exposures are still within ~1.3″ of the source (90 %).
+
+Logged during **Step 4** (positions and regions; branch `step4-positions`).
+
+- **Small-scale-sensitivity lookup ported from `uvotsource`** (UVOT::Source
+  `updateDetectorPosition`/`applySmallScaleSensitivity`, UVOT::Calibration
+  `estimateRAWfromDET`): DET from the sky image's `D` WCS (mm / 0.009075 +
+  1100.5), the DET→RAW polynomial, clamp, subtract `UD_RAWX`/`UD_RAWY`
+  ("best shift-and-add", set by `uvotimage` in newer processing), clamp. On
+  1,457 3C 273 exposures DET agrees with `uvotsource` to < 0.001 pixel and
+  the LOW flag agrees in all 1,457. `uvotsource` skips the `UD_RAW` shift if
+  the environment variable `SSS_ADJUST_DISABLE` is set; the port always
+  applies it. LOW is the default level (`SSS_TYPE || 'LOW'` in
+  Calibration.pm).
+- **`uvotlc`'s values, checked in HEASoft 6.36's UVOT/LCPar.pm:** background
+  exclusion radius 20/15/10/7/5″ for magnitude ≤ 12/14/16/18/fainter, and
+  `uvotdetect` threshold 2.5σ. (`uvotlc`'s own annulus is 12.5–25″; this
+  pipeline uses Poole et al.'s 27.5–35″.) `uvotlc` also flags *source
+  confusion* (a neighbour within 5″ plus a magnitude-dependent radius of
+  the target); not done here yet — a to-do for crowded fields.
+- **The target masked as its own neighbour:** in a trailed exposure
+  (00035017175 UVW2) the target's `uvotdetect` position was more than 5″
+  from the region centre, so its circle was cut out of the annulus. Now the
+  brightest detection within 10″ of `--ra`/`--dec` is always the target.
+- **Smeared images the axis ratio misses.** During the 2023–24 jitter,
+  00089771001's 14 UVM2 event exposures (640–1,650 s, one pointing per sky
+  image) show 3C 273 as a multi-lobed smear up to ~30″ across. In 13 of
+  them the axis ratio within 6″ is 1.03–1.21 and S/N 130–220, but only
+  33–60 % of the 15″ counts are in the 5″ circle, against ~86 % for a point
+  source: photometry 1.4–2.6 times too faint, and nothing else flagged it.
+  In the 14th only faint tracks remain (S/N 3.4). Hence
+  the concentration column (5″/15″ net counts): ordinary exposures 0.84–0.87
+  per filter; coincidence loss lowers it slightly (U above 0.9 counts/frame:
+  median 0.83, 5 % below 0.77); flag below 0.70 (135 of 2,891: 109 event
+  openers, 23 jitter-period image-mode exposures, 3 IMAGEEVENT exposures
+  from 2005). 29 of the 135 have an axis ratio ≤ 1.3.
+- **00031659123's second snapshot** (2023-12-05, image mode, ASPCORR=NONE):
+  U, V, UVW1, UVW2, UVM2 sources are curved streaks 30–150″ long (on-board
+  shift-and-add evidently could not follow the jitter); in B they are compact
+  but 3C 273 is not within 8″ (S/N 1.2 where ~38 is expected). A
+  peak-matching attempt to measure B's pointing error against the first
+  snapshot did not converge (37 s exposure). All six have S/N < 10 at the
+  source.
+- **`uvotdetect` on a smeared exposure** detects lobes of the smeared target
+  as separate sources, which are then masked in the annulus (00089771001
+  UVM2, whose deepest aspect-corrected exposure is itself smeared). Harmless
+  there, since those exposures are flagged; for other targets it would be
+  better to detect on the deepest *compact* exposure (a second pass after
+  the shapes are known). To do.
+- **Found in Step 3 while checking these exposures** (fixed in this branch):
+  - The inventory globbed `sw*_sk.img*`, which misses `sw…um2_sk_01.img.gz`:
+    00089771001's event data were split into `_uf.evt.gz` and
+    `_uf_01.evt.gz` (10.0 and 3.1 million events), each with its own sky
+    image, exposure map and raw image. 5 UVM2 exposures (4,281 s) were
+    silently missing from the ledger. The exposure-map name mapping
+    (`_sk` → `_ex`) in the inventory, Step 4 and the doctor missed `_NN`
+    too.
+  - **Correction to the Step 3 note on archive gaps:** of the 6 catalog
+    mismatches, one was the `_sk_01` file and one the `UNDEF` exposure; in
+    the other 4, HEASARC's exposure log lists exactly the exposures in the
+    sky images, and the master catalog's total is 9–11 % higher with nothing
+    missing (00035017001 B: it counts the elapsed time of an `IMAGEEVENT`
+    observation; the 3 others: unknown). So the inventory now checks the
+    exposure log (`swiftuvlog`) by extension name instead: 2,935 of 2,936
+    logged 3C 273 exposures have a sky image, the exception being the
+    `UNDEF` one. Before the `_sk_01` fix this check would have reported the
+    5 missing UVM2 exposures by name. The log lists event-mode exposures
+    by their `…E` extension names too (from `_rw` images), plus rows for
+    the event files without a name, which the check skips.
+  - One header has `STALLOSS` = 3.99×10²⁵² (00089771001, `m2726326001E`);
+    its `EXPOSURE` is unaffected (= `ONTIME` × the 11 ms dead-time factor).
+    The inventory's `loss` column is now `-` with a note when the keywords
+    are outside 0…(TSTOP−TSTART).
+- **To do for faint targets:** a field-star check per exposure (positions
+  and shapes of the brightest stars from the detection list): it tells a
+  mis-pointed or smeared exposure from a genuine non-detection, which S/N at
+  the target position cannot; it could also measure and correct the
+  pointing of exposures without aspect correction.
+- Step 4 tests (one row per candidate, trailed opener, jitter smear flagged
+  by concentration, offset-circle background, SSS flags as `uvotsource`,
+  region files accepted by `uvotsource`, overrides, position mismatch
+  refused) are in `_dev_internal/step4_smoke/test_positions.sh`; Step 3's
+  now include the `_sk_01` file and the exposure-log check.

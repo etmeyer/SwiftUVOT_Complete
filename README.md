@@ -12,8 +12,8 @@ and thresholds checked on real data.
 **Author:** Eileen T. Meyer ([@etmeyer](https://github.com/etmeyer))  
 **License:** MIT
 
-> **Status (October 2026):** Steps 1–3 (setup, download, inventory) are done;
-> the other steps are being written. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
+> **Status (October 2026):** Steps 1–4 (setup, download, inventory, positions
+> and regions) are done; the other steps are being written. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
 > built from [docs/](docs/index.md).
 
 ---
@@ -45,7 +45,7 @@ the good ones into one point per observation and filter.
 | 1 | Setup and environment check (HEASoft, UVOT CALDB) — [docs](docs/01-setup.md) | `swift_uvot_doctor.py` | done |
 | 2 | Download UVOT data from the HEASARC archive — [docs](docs/02-download.md) | `swift_uvot_download.py` | done |
 | 3 | Inventory of every exposure (filter, frame time, aspect, field of view) — [docs](docs/03-inventory.md) | `swift_uvot_inventory.py` | done |
-| 4 | Source positions, regions and image diagnostics | | planned |
+| 4 | Source positions, shapes and regions; trailed and smeared images, sensitivity patches — [docs](docs/04-positions.md) | `swift_uvot_positions.py`, `swift_uvot_viewer.py` | done |
 | 5 | Photometry of every exposure with `uvotsource` | | planned |
 | 6 | Quality rules and overrides → master table | | planned |
 | 7 | Light curve: combine per observation and filter, plot | | planned |
@@ -58,6 +58,8 @@ swift_uvot_doctor.py          # Step 1: check the terminal
 swift_uvot_download.py --name "3C 273" --list-only                # Step 2: list ...
 swift_uvot_download.py --name "3C 273" --outdir UVOT_input --nproc 4   # ... and download
 swift_uvot_inventory.py --ra 187.2779 --dec 2.0524                      # Step 3: every exposure
+swift_uvot_positions.py --ra 187.2779 --dec 2.0524 --nproc 16           # Step 4: positions, regions
+swift_uvot_viewer.py                                                    # ... and contact sheets
 ```
 
 See [docs/01-setup.md](docs/01-setup.md) for installation, the UVOT CALDB, the
@@ -104,12 +106,42 @@ window, aspect correction, exposure and on-time, snapshot and whether the
 exposure opens it, image/event duplicates, and how much of the 5″ source
 circle and 27.5–35″ background annulus is exposed. Every exposure gets one
 status (`candidate`, `not_covered`, `partial`, `settling`, `nonphot`,
-`no_expmap`, `unreadable`). Also compares each observation's on-time per
-filter with the Swift master catalog. Exits 1 if any file is unreadable.
+`no_expmap`, `unreadable`). Also checks that every exposure in HEASARC's
+UVOT exposure log has a sky image. Exits 1 if any file is unreadable.
 
 ```
 swift_uvot_inventory.py --ra RA --dec DEC [--indir UVOT_input] [--outdir UVOT_output]
                         [--nproc 8] [--no-catalog]
+```
+
+### `swift_uvot_positions.py`
+
+For every candidate exposure: the source's centroid and offset from your
+position, its shape (axis ratio, sizes, position angle), the share of its
+15″ counts inside the 5″ region (trailed and smeared images), its detector
+position and the CALDB low-sensitivity flags at the LOW, MID and HIGH levels
+(the same lookup as `uvotsource`). Writes fk5 source and background region
+files: the 5″ circle (at the centroid when the source is clear and within
+3″), and the 27.5–35″ annulus minus the sources `uvotdetect` finds, or an
+offset circle when the annulus is not evenly exposed. Positions and
+backgrounds set in `UVOT_output/uvot_region_overrides.txt` win. Output:
+`UVOT_output/uvot_positions.txt`, `uvot_detections.txt`, `regions/`. Exits 1
+if any exposure failed.
+
+```
+swift_uvot_positions.py --ra RA --dec DEC [--outdir UVOT_output] [--nproc 8]
+```
+
+### `swift_uvot_viewer.py`
+
+A PDF of Step 4's results (`UVOT_output/uvot_positions.pdf`): distributions
+of shape, concentration and offset, then contact sheets of the exposures
+worth a look, worst first, with the regions drawn on; or every exposure of
+the observations you name.
+
+```
+swift_uvot_viewer.py [--outdir UVOT_output] [--pdf FILE] [--per-category 48]
+                     [--obsid OBSID ...]
 ```
 
 ### `swift_uvot_runner.py`, `swift_uvot_env.py`, `swift_uvot_tables.py`
