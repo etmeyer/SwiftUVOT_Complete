@@ -35,6 +35,7 @@ nav:
   - 4. Positions and regions: 04-positions.md
   - 5. Photometry: 05-photometry.md
   - 6. Master table: 06-master-table.md
+  - 7. Light curve: 07-lightcurve.md
 
 markdown_extensions:
   - tables

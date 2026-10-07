@@ -314,3 +314,22 @@ Logged during **Step 6** (master table; branch `step6-master-table`).
   (`off_centre`). Centring compact sources (concentration ≥ 0.78, axis
   ratio ≤ 1.5) up to ~5″ away would keep them. Minor; to do.
 - Step 6 tests are in `_dev_internal/step6_smoke/test_master_table.sh`.
+
+Logged during **Step 7** (light curve; branch `step7-lightcurve`).
+
+- **Systematic floor, measured:** reduced χ² = 1 within 3C 273
+  observations needs 1.0 % (V), 1.6 % (B), 0.7 % (U without `high_coi`),
+  1.1 % (UVW1), 1.3 % (UVM2), 1.4 % (UVW2) per exposure; the plan had
+  guessed 2–2.5 %. Default 1.5 %. Mixing `high_coi` U with windowed U
+  gives 3.8 %, so `high_coi` U is used only when an observation has no
+  other U.
+- **Conversion factors** are read from `uvotsource`'s output (Vega/AB zero
+  points, erg/s/cm²/Å and mJy per count/s); they reproduce the published
+  zero points (V 17.89, B 19.11, U 18.34, UVW1 17.44, UVM2 16.85, UVW2
+  17.38).
+- **`jitter_ok` is not proof:** 00031659120 V (2023-11-15) passed the PSF
+  check but is ~20 % below its neighbours. A stricter jitter-period rule,
+  or comparison with field stars, may be needed.
+- **To do:** dereddening script (SFD-scaled E(B−V) with matching
+  coefficients, per the plan); the faint-target test (PKS 0537−286) for
+  upper limits; per-exposure light curves (expansion).

@@ -12,9 +12,9 @@ and thresholds checked on real data.
 **Author:** Eileen T. Meyer ([@etmeyer](https://github.com/etmeyer))  
 **License:** MIT
 
-> **Status (October 2026):** Steps 1–6 (setup, download, inventory, positions
-> and regions, photometry, quality rules) are done; Step 7 (the light curve) is
-> being written. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
+> **Status (October 2026):** Steps 1–7 (setup, download, inventory, positions
+> and regions, photometry, quality rules, light curve) are done; tested on
+> 3C 273. Next: a faint target with non-detections. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
 > built from [docs/](docs/index.md).
 
 ---
@@ -49,7 +49,7 @@ the good ones into one point per observation and filter.
 | 4 | Source positions, shapes and regions; trailed and smeared images, sensitivity patches — [docs](docs/04-positions.md) | `swift_uvot_positions.py`, `swift_uvot_viewer.py` | done |
 | 5 | Photometry of every exposure with `uvotsource` — [docs](docs/05-photometry.md) | `swift_uvot_photometry.py` | done |
 | 6 | Quality rules and overrides → master table — [docs](docs/06-master-table.md) | `make_uvot_master_table.py` | done |
-| 7 | Light curve: combine per observation and filter, plot | | planned |
+| 7 | Light curve: combine per observation and filter, plot — [docs](docs/07-lightcurve.md) | `swift_uvot_lightcurve.py` | done |
 
 Everything runs in **one terminal** with HEASoft set up and CIAO not set up:
 
@@ -63,6 +63,7 @@ swift_uvot_positions.py --ra 187.2779 --dec 2.0524 --nproc 16           # Step 4
 swift_uvot_viewer.py                                                    # ... and contact sheets
 swift_uvot_photometry.py --nproc 16                                     # Step 5: photometry
 make_uvot_master_table.py                                               # Step 6: quality rules
+swift_uvot_lightcurve.py                                                # Step 7: light curve
 ```
 
 See [docs/01-setup.md](docs/01-setup.md) for installation, the UVOT CALDB, the
@@ -181,6 +182,20 @@ against time, included or excluded).
 ```
 make_uvot_master_table.py [--outdir UVOT_output] [--sss-level LOW|MID|HIGH]
                           [--coincidence-limit FILTER=VALUE ...]
+```
+
+### `swift_uvot_lightcurve.py`
+
+Combines the included exposures into one point per observation and filter
+(inverse-variance mean with a 1.5 % systematic floor per exposure, measured
+from 3C 273), with a status each: detected, upper limit, lower limit (all
+saturated), excluded, not covered. Count rates, Vega and AB magnitudes and
+flux densities with `uvotsource`'s own conversion; flags carried from the
+exposures. Output: `UVOT_output/uvot_lightcurve.txt` and
+`uvot_lightcurve.pdf`.
+
+```
+swift_uvot_lightcurve.py [--outdir UVOT_output] [--floor 0.015] [--nsigma 3]
 ```
 
 ### `swift_uvot_runner.py`, `swift_uvot_env.py`, `swift_uvot_tables.py`
