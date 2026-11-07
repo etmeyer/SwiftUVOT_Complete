@@ -5,27 +5,41 @@ and the source and background regions for photometry.
 
 For every candidate exposure in Step 3's inventory:
 
-  1. Position and shape. The brightest pixel within 8" of your --ra/--dec,
-     a centroid around it, the offset of that centroid from --ra/--dec, and
-     the second-moment shape of the source: axis ratio, sizes and position
-     angle. Trailed exposures have axis ratios well above 1. Then the
-     concentration: the net counts in the 5" source region divided by
-     those in a 15" circle. A point source gives about 0.85; a long trail
-     or a smeared image, which the axis ratio can miss, gives less (flagged
-     below 0.70).
+  1. The background (item 4 below), then position and shape: the
+     brightest pixel within 8" of your --ra/--dec, a centroid around it,
+     its S/N, and -- only at S/N >= 10, where noise no longer dominates --
+     the offset of that centroid from --ra/--dec and the second-moment
+     shape: axis ratio, sizes and position angle. Trailed exposures have
+     axis ratios well above 1. Then the concentration: the net counts in
+     the 5" source region divided by those in a 15" circle, with its error
+     (counts, plus 1 % of the background). A point source gives
+     0.86-0.92; a long trail or a smeared image, which the axis ratio can
+     miss, gives less (flagged below 0.70). It is reported only where its
+     error is at most 0.02; a faint source gets '-' and the reason.
   2. The source region: a 5" circle at the centroid when the source is
      detected (S/N >= 10) within 3" of --ra/--dec -- this corrects the
      pointing of exposures without aspect correction -- otherwise at
      --ra/--dec.
   3. Small-scale sensitivity: whether the source's detector position falls
      on a low-sensitivity patch in each of the CALDB's LOW, MID and HIGH
-     maps (the same lookup as uvotsource, which uses LOW by default).
+     maps (the same lookup as uvotsource, which uses LOW by default), and
+     what fraction of the 5" circle is on a LOW patch.
   4. The background region: the 27.5-35" annulus (Poole et al. 2008), minus
      a circle around every source uvotdetect finds in the deepest exposure
-     of that observation and filter (radius by magnitude, as HEASoft's
-     uvotlc does). It must be fully and evenly exposed, as uvotsource
-     requires, with at least half its area left; otherwise a 15" circle
-     45-90" away is used, wherever it is fully exposed and clear.
+     of that observation and filter. Each circle reaches out to where the
+     source's PSF wing (CALDB profile) falls below 0.5 % of the sky, 5-40";
+     a source at 0.9 counts per frame or more, whose measured rate
+     understates its wings, gets 40" and a 2" strip either side of its
+     read-out direction. A faint detection within 45" of a source 100
+     times brighter is most likely a fragment of that source's halo and
+     keeps uvotlc's magnitude-binned radius (5-20"). Then the annulus is cut into 8 sectors, and a
+     sector that is too bright against the others (Poisson p < 0.001) is
+     dropped whole: never single pixels, which would bias a sky of a few
+     counts per pixel low. The background is the plain mean of what is
+     left -- uvotsource's own estimator. The annulus must be fully and
+     evenly exposed, as uvotsource requires, with at least half its area
+     left; otherwise a 15" circle 45-90" away is used, wherever it is fully
+     exposed and clear of masks.
   5. Overrides: positions and backgrounds you set in
      uvot_region_overrides.txt win over the automatic choice.
 
@@ -65,6 +79,7 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS, FITSFixedWarning
+from scipy.stats import poisson
 
 import swift_uvot_env as uenv
 from swift_uvot_runner import run_tool, run_many
@@ -80,7 +95,9 @@ CENTROID_RADIUS = 4.0       # arcsec around the peak for the centroid
 SHAPE_RADIUS = 6.0          # arcsec around the centroid for the shape
 CONC_RADIUS = 15.0          # arcsec: the 5" counts are compared with this
 CONC_MIN = 0.70             # 5"/15" counts below this: light outside 5"
-MIN_SNR = 10.0              # the centroid is used only for a source this clear
+CONC_ERR_MAX = 0.02         # concentration reported only if this precise
+SKY_SYSTEMATIC = 0.01       # of the background, in the concentration error
+MIN_SNR = 10.0              # centroid and shape only for a source this clear
 MAX_SHIFT = 3.0             # arcsec: centroids farther away are not used
 SAME_SOURCE = 5.0           # arcsec: a detection this close is your source
 EXPOSED_TOLERANCE = 0.01    # uvotsource's expdeltaf: uneven exposure limit
@@ -90,18 +107,46 @@ OFFSET_DISTANCES = (45.0, 60.0, 90.0)   # arcsec from the source
 OFFSET_ANGLES = 24          # positions tried at each distance
 DETECT_THRESHOLD = 2.5      # uvotdetect significance, as uvotlc
 DETECTIONS_KEPT = 150.0     # arcsec: detections kept in uvot_detections.txt
-# uvotlc's exclusion radius for a detected source, by magnitude
+# uvotlc's exclusion radius for a detected source, by magnitude: used only
+# for the first, rough sky level that sizes the real masks
 EXCLUSION_RADII = ((12.0, 20.0), (14.0, 15.0), (16.0, 10.0), (18.0, 7.0))
 EXCLUSION_DEFAULT = 5.0
+# Masks sized by flux: out to where a neighbour's PSF wing falls below this
+# fraction of the sky surface brightness (CALDB REEF profile, exponential
+# tail beyond its 30" end), between MASK_MIN and MASK_MAX.
+WING_FRACTION = 0.005
+MASK_MIN, MASK_MAX = 5.0, 40.0      # arcsec
+TAIL_FIT = (20.0, 29.5)     # arcsec: the CALDB profile range the tail is fit on
+SKY_RING = (35.0, 100.0)    # arcsec around the source: the sky for the masks
+# A source at or above this many raw counts per frame is saturated or nearly
+# so: its measured rate understates its wings. It gets MASK_MAX, plus a strip
+# along the read-out direction (detector Y).
+BRIGHT_CPF = 0.9
+# A detection within HALO_REACH of a source HALO_RATIO times brighter (or of
+# a bright one) is most likely a fragment of that source's halo or smoke
+# ring, which uvotdetect breaks into many faint 'sources' around a
+# saturated star: it keeps uvotlc's radius, or it would eat the annulus.
+HALO_RATIO = 100.0
+HALO_REACH = 45.0           # arcsec
+STRIP_HALF_WIDTH = 2.0      # arcsec
+# Background sectors: the annulus is cut into N_SECTORS; a sector whose
+# counts are high at p < SECTOR_P (Poisson, against the other sectors) is
+# dropped whole -- never single pixels, which would bias a sky of a few
+# counts per pixel low.
+N_SECTORS = 8
+SECTOR_P = 1e-3
+MIN_SECTORS_LEFT = 4
+SSS_EDGE_FRACTION = 0.10    # of the 5" circle on a LOW patch: noted
 
 SSS_LEVELS = ('LOW', 'MID', 'HIGH')
 OVERRIDES_FILE = 'uvot_region_overrides.txt'
 
 COLUMNS = ['obsid', 'filter', 'hdu', 'extname', 'aspcorr', 'mode', 'first',
            'snr', 'offset', 'd_ra', 'd_dec', 'axis_ratio', 'sig_major',
-           'sig_minor', 'major_pa', 'conc', 'center', 'src_ra', 'src_dec',
-           'detx', 'dety', 'sss_low', 'sss_mid', 'sss_high', 'bkg_type',
-           'bkg_area', 'n_excl', 'src_reg', 'bkg_reg', 'status', 'reason']
+           'sig_minor', 'major_pa', 'conc', 'conc_err', 'center', 'src_ra',
+           'src_dec', 'detx', 'dety', 'sss_low', 'sss_mid', 'sss_high',
+           'sss_low_frac', 'bkg_type', 'bkg_area', 'n_excl', 'n_strip',
+           'n_sect', 'bkg5', 'sky', 'src_reg', 'bkg_reg', 'status', 'reason']
 
 # DET -> RAW detector coordinates: the polynomial in HEASoft's
 # UVOT::Calibration::estimateRAWfromDET (lib/perl/UVOT/Calibration.pm),
@@ -214,27 +259,226 @@ def _open_fits(path):
     return fits.open(path)
 
 
-def measure_source(data, wcs, scale, x0, y0):
+def wing_profiles():
     """
-    Peak, centroid, S/N and shape of the source near pixel (x0, y0).
-    Returns a dict (pixel coordinates; sizes in arcsec), or None if nothing
-    is there.
+    {filter: (radius grid, surface brightness)}: the PSF wing per arcsec^2,
+    as a fraction of a source's 5" counts, from the CALDB encircled-energy
+    file (REEF, normalised to 1 at 5"). Beyond the file's 30" the wing is an
+    exponential fit to its last 10". Each value is the largest at that
+    radius or beyond, so a radius whose value is below a level stays below
+    it farther out.
     """
-    ny, nx = data.shape
-    r = int(math.ceil((BKG_OUTER + 2) / scale))
-    xc, yc = int(round(x0)), int(round(y0))
+    res = run_tool('quzcif', ['SWIFT', 'UVOTA', '-', 'V', 'REEF', 'now', 'now',
+                              '-'], timeout=60)
+    words = res.stdout.split()
+    if not res.ok or not words or not os.path.isfile(words[0]):
+        raise RuntimeError('no PSF encircled-energy file (REEF) in the CALDB '
+                           '(%s)' % (res.reason or res.tail))
+    grid = np.arange(0.25, MASK_MAX + 0.01, 0.25)
+    profiles = {}
+    with fits.open(words[0]) as hdul:
+        for hdu in hdul[1:]:
+            name = str(hdu.header.get('EXTNAME', ''))
+            if not name.startswith('REEF'):
+                continue
+            r = np.asarray(hdu.data['RADIUS'], float)
+            ee = np.asarray(hdu.data['REEF'], float)
+            mid = 0.5 * (r[1:] + r[:-1])
+            sb = np.diff(ee) / (np.pi * np.diff(r ** 2))
+            fit = (mid >= TAIL_FIT[0]) & (mid <= TAIL_FIT[1]) & (sb > 0)
+            slope, icpt = np.polyfit(mid[fit], np.log(sb[fit]), 1)
+            prof = np.where(grid <= mid[-1], np.interp(grid, mid, sb),
+                            np.exp(icpt + slope * grid))
+            prof = np.maximum.accumulate(np.clip(prof, 0, None)[::-1])[::-1]
+            profiles[name[4:]] = (grid, prof)
+    return profiles
+
+
+def mask_radius(rate, sky, profile):
+    """
+    Mask radius (arcsec) for a neighbour of `rate` counts/s: where its wing
+    falls below WING_FRACTION of the sky (counts/s/arcsec^2).
+    """
+    if not sky or sky <= 0:
+        return MASK_MAX
+    if not rate or rate != rate or rate <= 0:
+        return MASK_MIN
+    grid, prof = profile
+    over = np.nonzero(rate * prof > WING_FRACTION * sky)[0]
+    if not over.size:
+        return MASK_MIN
+    return float(min(MASK_MAX, max(MASK_MIN, grid[over[-1]] + 0.25)))
+
+
+def _cutout(arrays, x, y, reach, scale):
+    """
+    Square cutouts of the arrays around pixel (x, y), `reach` arcsec on each
+    side, with zeros off the image; and their pixel coordinates (xx, yy).
+    """
+    r = int(math.ceil(reach / scale))
+    xc, yc = int(round(x)), int(round(y))
+    ny, nx = arrays[0].shape
     xa, xb = max(0, xc - r), min(nx, xc + r + 1)
     ya, yb = max(0, yc - r), min(ny, yc + r + 1)
-    if xa >= xb or ya >= yb:
+    out = []
+    for a in arrays:
+        c = np.zeros((2 * r + 1, 2 * r + 1))
+        if xa < xb and ya < yb:
+            c[ya - (yc - r):yb - (yc - r), xa - (xc - r):xb - (xc - r)] = \
+                np.nan_to_num(a[ya:yb, xa:xb].astype(float))
+        out.append(c)
+    yy, xx = np.mgrid[yc - r:yc + r + 1, xc - r:xc + r + 1]
+    return out, xx, yy
+
+
+def readout_direction(header, x, y):
+    """Unit pixel vector along detector Y (the read-out direction) at (x, y)."""
+    wd = WCS(header, key='D')
+    m0 = np.array(wd.pixel_to_world_values(x, y))
+    jac = np.array([np.array(wd.pixel_to_world_values(x + 1, y)) - m0,
+                    np.array(wd.pixel_to_world_values(x, y + 1)) - m0]).T
+    v = np.linalg.solve(jac, [0.0, 1.0])
+    return v / math.hypot(*v)
+
+
+def excluded(xx, yy, scale, masks, strips, grow=0.0):
+    """Pixels inside any mask circle (x, y, r) or strip (x, y, vx, vy, half)."""
+    out = np.zeros(xx.shape, dtype=bool)
+    for ex, ey, er in masks:
+        out |= np.hypot(xx - ex, yy - ey) * scale <= er + grow
+    for sx, sy, vx, vy, half in strips:
+        dx, dy = xx - sx, yy - sy
+        along = (dx * vx + dy * vy) * scale
+        perp = (dy * vx - dx * vy) * scale
+        out |= (np.abs(perp) <= STRIP_HALF_WIDTH + grow) & \
+            (np.abs(along) <= half)
+    return out
+
+
+def sky_level(data, expmap, scale, x, y, masks):
+    """
+    Sky surface brightness (counts/s/arcsec^2) in the SKY_RING around (x, y),
+    with the masks out and only fully exposed pixels: the level the mask
+    radii are set against. None if the ring has no such pixel.
+    """
+    (cut, emap), xx, yy = _cutout((data, expmap), x, y, SKY_RING[1] + 2,
+                                  scale)
+    dist = np.hypot(xx - x, yy - y) * scale
+    ring = (dist >= SKY_RING[0]) & (dist <= SKY_RING[1]) & (emap > 0)
+    if not ring.any():
         return None
-    cut = np.nan_to_num(data[ya:yb, xa:xb].astype(float))
-    yy, xx = np.mgrid[ya:yb, xa:xb]
+    ring &= emap >= 0.99 * np.median(emap[ring])
+    ring &= ~excluded(xx, yy, scale, masks, [])
+    if not ring.any():
+        return None
+    return float(cut[ring].sum() / (emap[ring].sum() * scale ** 2))
+
+
+def _uniform(expmap, mask, reference):
+    """True if every masked pixel's exposure is within tolerance."""
+    vals = expmap[mask]
+    return vals.size > 0 and np.all(np.abs(vals - reference)
+                                    <= EXPOSED_TOLERANCE * reference)
+
+
+def _poisson_high(n, mu):
+    """P(N >= n) for a Poisson mean mu."""
+    if mu <= 0:
+        return 0.0 if n > 0 else 1.0
+    return float(poisson.sf(round(n) - 1, mu))
+
+
+def background(data, expmap, scale, cx, cy, masks, strips):
+    """
+    The background around pixel (cx, cy): the 27.5-35" annulus minus the
+    masks and strips, minus whole sectors that are too bright; else an
+    offset circle; else none. Returns a dict: type ('annulus', 'circle' or
+    'none'), masks and strips that touch the region, rejected sectors, the
+    offset circle centre, area (arcsec^2), mean counts per pixel and pixel
+    count of the region (for 'none': of whatever annulus is left, for
+    Step 4's own measurements), the exposure at the source, and a note.
+    """
+    reach = max(OFFSET_DISTANCES) + OFFSET_RADIUS + 2
+    (cut, emap), xx, yy = _cutout((data, expmap), cx, cy, reach, scale)
+    margin = 0.75 * scale  # uvotsource counts partly covered pixels
+    dist = np.hypot(xx - cx, yy - cy) * scale
+    ref = float(np.median(emap[dist <= SRC_RADIUS]))
+    out = {'type': 'none', 'masks': [], 'strips': [], 'sectors': [],
+           'offset': None, 'area': 0.0, 'mean': 0.0, 'npix': 0, 'ref': ref,
+           'note': ''}
+    if ref <= 0:
+        out['note'] = 'no exposure at the source'
+        return out
+    ring = (dist >= BKG_INNER) & (dist <= BKG_OUTER)
+    core = ring & ~excluded(xx, yy, scale, masks, strips) & (emap > 0)
+    sector = ((np.degrees(np.arctan2(yy - cy, xx - cx)) % 360.0)
+              // (360.0 / N_SECTORS)).astype(int)
+    rejected = []
+    while N_SECTORS - len(rejected) > MIN_SECTORS_LEFT:
+        live = [k for k in range(N_SECTORS) if k not in rejected]
+        worst = None
+        for k in live:
+            mine = core & (sector == k)
+            rest = core & np.isin(sector, [j for j in live if j != k])
+            if not mine.any() or not rest.any():
+                continue
+            p = _poisson_high(cut[mine].sum(),
+                              cut[rest].sum() / rest.sum() * mine.sum())
+            if worst is None or p < worst[0]:
+                worst = (p, k)
+        if worst is None or worst[0] >= SECTOR_P:
+            break
+        rejected.append(worst[1])
+    keep = core & ~np.isin(sector, rejected)
+    out.update(sectors=sorted(rejected), npix=int(keep.sum()),
+               mean=float(cut[keep].mean()) if keep.any() else 0.0)
+    full_area = math.pi * (BKG_OUTER ** 2 - BKG_INNER ** 2)
+    area = keep.sum() * scale ** 2
+    wide = ((dist >= BKG_INNER - margin) & (dist <= BKG_OUTER + margin)
+            & ~excluded(xx, yy, scale, masks, strips, -margin)
+            & ~np.isin(sector, rejected))
+    if area >= MIN_BKG_FRACTION * full_area and _uniform(emap, wide, ref):
+        out.update(type='annulus', area=area, masks=[
+            m for m in masks if BKG_INNER - m[2] <= math.hypot(
+                m[0] - cx, m[1] - cy) * scale <= BKG_OUTER + m[2]],
+            strips=[s for s in strips
+                    if (ring & excluded(xx, yy, scale, [], [s])).any()])
+        return out
+    out['note'] = ('annulus %.0f%% clear of sources' % (100 * area / full_area)
+                   if area < MIN_BKG_FRACTION * full_area
+                   else 'annulus not evenly exposed')
+    blocked = excluded(xx, yy, scale, masks, strips)
+    for dmax in OFFSET_DISTANCES:
+        for k in range(OFFSET_ANGLES):
+            ang = 2 * math.pi * k / OFFSET_ANGLES
+            ox = cx + dmax / scale * math.cos(ang)
+            oy = cy + dmax / scale * math.sin(ang)
+            d_o = np.hypot(xx - ox, yy - oy) * scale
+            circle = d_o <= OFFSET_RADIUS
+            if (circle & blocked).any():
+                continue
+            if _uniform(emap, d_o <= OFFSET_RADIUS + margin, ref):
+                out.update(type='circle', offset=(ox, oy), sectors=[],
+                           area=math.pi * OFFSET_RADIUS ** 2,
+                           mean=float(cut[circle].mean()),
+                           npix=int(circle.sum()),
+                           note=out['note'] + '; offset circle %.0f arcsec '
+                           'away' % dmax)
+                return out
+    out['note'] += '; no clean offset circle either'
+    return out
+
+
+def measure_source(data, wcs, scale, x0, y0, bkg):
+    """
+    Peak, centroid, S/N and shape of the source near pixel (x0, y0), over a
+    background of `bkg` counts per pixel. Returns a dict (pixel coordinates;
+    sizes in arcsec), or None if nothing is there.
+    """
+    (cut,), xx, yy = _cutout((data,), x0, y0,
+                             SEARCH_RADIUS + SHAPE_RADIUS + 2, scale)
     dist0 = np.hypot(xx - x0, yy - y0) * scale
-    ring = (dist0 >= BKG_INNER) & (dist0 <= BKG_OUTER)
-    bkg = float(np.median(cut[ring])) if ring.any() else 0.0
     search = dist0 <= SEARCH_RADIUS
-    if not search.any():
-        return None
     iy, ix = np.unravel_index(np.argmax(np.where(search, cut, -np.inf)),
                               cut.shape)
     cx, cy = float(xx[iy, ix]), float(yy[iy, ix])
@@ -265,103 +509,126 @@ def measure_source(data, wcs, scale, x0, y0):
             'sig_minor': math.sqrt(vmin) * scale, 'major_pa': pa}
 
 
-def concentration(data, scale, x, y):
+def concentration(data, scale, x, y, bkg, bkg_var):
     """
-    (net counts in the 5" circle / net counts in the 15" circle, S/N in the
-    15" circle) at pixel (x, y), with the median of the 27.5-35" annulus as
-    background. A point source gives 0.83-0.87 (lower with strong
-    coincidence loss); a trailed or smeared one less. None if the 15"
-    circle holds no source light.
+    (net counts in the 5" circle / net counts in the 15" circle, its error)
+    at pixel (x, y), over a background of `bkg` counts per pixel with
+    variance `bkg_var`. A point source gives 0.86-0.92 (lower with strong
+    coincidence loss); a trailed or smeared one less. (None, None) if the
+    15" circle holds no source light.
     """
-    ny, nx = data.shape
-    r = int(math.ceil((BKG_OUTER + 2) / scale))
-    xc, yc = int(round(x)), int(round(y))
-    xa, xb = max(0, xc - r), min(nx, xc + r + 1)
-    ya, yb = max(0, yc - r), min(ny, yc + r + 1)
-    if xa >= xb or ya >= yb:
-        return None, 0.0
-    cut = np.nan_to_num(data[ya:yb, xa:xb].astype(float))
-    yy, xx = np.mgrid[ya:yb, xa:xb]
+    (cut,), xx, yy = _cutout((data,), x, y, CONC_RADIUS + 2, scale)
     dist = np.hypot(xx - x, yy - y) * scale
-    ring = (dist >= BKG_INNER) & (dist <= BKG_OUTER)
-    bkg = float(np.median(cut[ring])) if ring.any() else 0.0
     m5, m15 = dist <= SRC_RADIUS, dist <= CONC_RADIUS
-    net5 = cut[m5].sum() - bkg * m5.sum()
-    total15 = cut[m15].sum()
-    net15 = total15 - bkg * m15.sum()
-    if net15 <= 0 or total15 <= 0:
-        return None, 0.0
-    return net5 / net15, net15 / math.sqrt(total15)
+    t5, t15 = cut[m5].sum(), cut[m15].sum()
+    a5, a15 = m5.sum(), m15.sum()
+    n5 = t5 - bkg * a5
+    ring = (t15 - t5) - bkg * (a15 - a5)   # net counts at 5-15"
+    n15 = n5 + ring
+    if n15 <= 0:
+        return None, None
+    v5 = max(t5, 0) + a5 ** 2 * bkg_var
+    vr = max(t15 - t5, 0) + (a15 - a5) ** 2 * bkg_var
+    cov = a5 * (a15 - a5) * bkg_var       # both share the background
+    var = (ring ** 2 * v5 + n5 ** 2 * vr - 2 * n5 * ring * cov) / n15 ** 4
+    return n5 / n15, math.sqrt(max(var, 0.0))
 
 
-def _uniform(expmap, mask, reference):
-    """True if every masked pixel's exposure is within tolerance."""
-    vals = expmap[mask]
-    return vals.size > 0 and np.all(np.abs(vals - reference)
-                                    <= EXPOSED_TOLERANCE * reference)
-
-
-def choose_background(expmap, wcs, scale, cx, cy, exclusions):
+def sss_low_fraction(header, scale, cx, cy, sss_map):
     """
-    (type, region lines, area in arcsec^2, n_excl, note) for the background:
-    the annulus minus exclusions, else an offset circle, else none.
-    exclusions: list of (x, y, radius_arcsec) in pixels of this image.
+    Fraction of the 5" source circle at pixel (cx, cy) on a low-sensitivity
+    patch of `sss_map` (sampled every 0.5"), with the same DET -> RAW
+    mapping as detector_position.
     """
-    ny, nx = expmap.shape
-    margin = 0.75 * scale  # uvotsource counts partly covered pixels
-    reach = max(OFFSET_DISTANCES) + OFFSET_RADIUS + 2
-    r = int(math.ceil(reach / scale))
-    xc, yc = int(round(cx)), int(round(cy))
-    xa, xb = max(0, xc - r), min(nx, xc + r + 1)
-    ya, yb = max(0, yc - r), min(ny, yc + r + 1)
-    emap = np.zeros((2 * r + 1, 2 * r + 1))
-    emap[ya - (yc - r):yb - (yc - r), xa - (xc - r):xb - (xc - r)] = \
-        np.nan_to_num(expmap[ya:yb, xa:xb])
-    yy, xx = np.mgrid[yc - r:yc + r + 1, xc - r:xc + r + 1]
-    dist = np.hypot(xx - cx, yy - cy) * scale
-    ref = float(np.median(emap[dist <= SRC_RADIUS]))
-    if ref <= 0:
-        return 'none', [], 0.0, 0, 'no exposure at the source'
+    g = np.arange(-SRC_RADIUS, SRC_RADIUS + 1e-9, 0.5)
+    gx, gy = np.meshgrid(g, g)
+    inside = np.hypot(gx, gy) <= SRC_RADIUS
+    px, py = cx + gx[inside] / scale, cy + gy[inside] / scale
+    mmx, mmy = WCS(header, key='D').pixel_to_world_values(px, py)
+    rawx, rawy = raw_from_det(mmx / 0.009075 + 1100.5, mmy / 0.009075 + 1100.5)
+    rawx = np.clip(np.clip(rawx, -0.5, 2047.49)
+                   - float(header.get('UD_RAWX', 0) or 0), -0.5, 2047.49)
+    rawy = np.clip(np.clip(rawy, -0.5, 2047.49)
+                   - float(header.get('UD_RAWY', 0) or 0), -0.5, 2047.49)
+    vals = sss_map[(rawy + 0.5).astype(int), (rawx + 0.5).astype(int)]
+    return float(np.mean(vals <= 0))
 
-    def excluded(mask_xx, mask_yy, grow):
-        out = np.zeros(mask_xx.shape, dtype=bool)
-        for ex, ey, er in exclusions:
-            out |= np.hypot(mask_xx - ex, mask_yy - ey) * scale <= er + grow
-        return out
 
-    annulus = (dist >= BKG_INNER - margin) & (dist <= BKG_OUTER + margin)
-    keep = annulus & ~excluded(xx, yy, -margin)
-    full_area = math.pi * (BKG_OUTER ** 2 - BKG_INNER ** 2)
-    core = (dist >= BKG_INNER) & (dist <= BKG_OUTER) & ~excluded(xx, yy, 0.0)
-    area = core.sum() * scale ** 2
-    used = [(ex, ey, er) for ex, ey, er in exclusions
-            if BKG_INNER - er <= math.hypot(ex - cx, ey - cy) * scale
-            <= BKG_OUTER + er]
-    note = ''
-    if area >= MIN_BKG_FRACTION * full_area and _uniform(emap, keep, ref):
-        return 'annulus', used, area, len(used), note
-    note = ('annulus %.0f%% clear of sources' % (100 * area / full_area)
-            if area < MIN_BKG_FRACTION * full_area
-            else 'annulus not evenly exposed')
-    for dmax in OFFSET_DISTANCES:
-        for k in range(OFFSET_ANGLES):
-            ang = 2 * math.pi * k / OFFSET_ANGLES
-            ox = cx + dmax / scale * math.cos(ang)
-            oy = cy + dmax / scale * math.sin(ang)
-            if any(math.hypot(ox - ex, oy - ey) * scale <= er + OFFSET_RADIUS
-                   for ex, ey, er in exclusions):
-                continue
-            circle = np.hypot(xx - ox, yy - oy) * scale <= OFFSET_RADIUS + margin
-            if _uniform(emap, circle, ref):
-                return ('circle', [(ox, oy)], math.pi * OFFSET_RADIUS ** 2, 0,
-                        note + '; offset circle %.0f arcsec away' % dmax)
-    return 'none', [], 0.0, 0, note + '; no clean offset circle either'
+def _polygon(wcs, points):
+    """An fk5 polygon region (exclusion) from pixel points."""
+    ra, dec = wcs.pixel_to_world_values(np.array([p[0] for p in points]),
+                                        np.array([p[1] for p in points]))
+    return 'fk5;-polygon(%s)' % ','.join('%.6f,%.6f' % (a, d)
+                                         for a, d in zip(ra, dec))
+
+
+def background_lines(wcs, scale, center_ra, center_dec, cx, cy, bkg):
+    """The fk5 region lines of a background from background()."""
+    if bkg['type'] == 'circle':
+        p = wcs.pixel_to_world(*bkg['offset'])
+        return ['fk5;circle(%.6f,%.6f,%.1f")'
+                % (p.ra.deg, p.dec.deg, OFFSET_RADIUS)]
+    if bkg['type'] != 'annulus':
+        return []
+    lines = ['fk5;annulus(%.6f,%.6f,%.1f",%.1f")'
+             % (center_ra, center_dec, BKG_INNER, BKG_OUTER)]
+    for ex, ey, er in bkg['masks']:
+        p = wcs.pixel_to_world(ex, ey)
+        lines.append('fk5;-circle(%.6f,%.6f,%.1f")'
+                     % (p.ra.deg, p.dec.deg, er))
+    for sx, sy, vx, vy, half in bkg['strips']:
+        hl, hw = half / scale, STRIP_HALF_WIDTH / scale
+        lines.append(_polygon(wcs, [
+            (sx + a * hl * vx - b * hw * vy, sy + a * hl * vy + b * hw * vx)
+            for a, b in ((1, 1), (1, -1), (-1, -1), (-1, 1))]))
+    reach = (BKG_OUTER + 2) / scale
+    width = 360.0 / N_SECTORS
+    for k in bkg['sectors']:
+        arc = np.radians(np.linspace(k * width, (k + 1) * width, 10))
+        lines.append(_polygon(wcs, [(cx, cy)] + [
+            (cx + reach * math.cos(a), cy + reach * math.sin(a))
+            for a in arc]))
+    return lines
+
+
+def file_masks(data, expmap, header, wcs, scale, src_ra, src_dec, detections,
+               profile):
+    """
+    The sky level and every detection's mask radius for one observation and
+    filter, measured on its deepest exposure. Returns (sky or None,
+    [(radius, bright), ...] in the order of detections).
+    """
+    x0, y0 = [float(v) for v in wcs.world_to_pixel_values(src_ra, src_dec)]
+    prelim = []
+    for d in detections:
+        ex, ey = [float(v) for v in wcs.world_to_pixel_values(d['ra'],
+                                                              d['dec'])]
+        prelim.append((ex, ey, exclusion_radius(d['mag'])))
+    sky = sky_level(data, expmap, scale, x0, y0, prelim)
+    bright = [d['cpf'] >= BRIGHT_CPF or d['saturated'] for d in detections]
+    pos = np.array([[p[0], p[1]] for p in prelim]) if prelim else None
+    radii = []
+    for i, d in enumerate(detections):
+        rate = d['rate'] if d['rate'] == d['rate'] else 0.0
+        halo = False
+        if not bright[i]:
+            dist = np.hypot(*(pos - pos[i]).T) * scale
+            halo = any(dist[j] <= HALO_REACH and (
+                bright[j] or detections[j]['rate'] >= HALO_RATIO * rate)
+                for j in range(len(detections)) if j != i)
+        if bright[i]:
+            radii.append((MASK_MAX, 'yes'))
+        elif halo or sky is None or profile is None:
+            radii.append((exclusion_radius(d['mag']), 'halo' if halo else 'no'))
+        else:
+            radii.append((mask_radius(rate, sky, profile), 'no'))
+    return sky, radii
 
 
 def process_file(args):
     """Measure every candidate exposure in one sky image."""
-    sky_path, rows, src_ra, src_dec, detections, sss_paths, overrides, outdir \
-        = args
+    (sky_path, rows, src_ra, src_dec, detections, sss_paths, profiles,
+     overrides, outdir) = args
     results = []
     try:
         sky = _open_fits(sky_path)
@@ -370,11 +637,42 @@ def process_file(args):
         sss = {lvl: fits.open(p, memmap=True) for lvl, p in sss_paths.items()}
     except Exception as exc:
         return [dict(r, status='failed', reason='cannot read: %s' % exc)
-                for r in rows]
+                for r in rows], {}
+    dets = detections or []
+    catpos = SkyCoord(src_ra, src_dec, unit='deg')
+    det_pos = SkyCoord([d['ra'] for d in dets], [d['dec'] for d in dets],
+                       unit='deg') if dets else None
+    # Your source is the brightest detection within 10" of --ra/--dec: in a
+    # trailed or mis-pointed exposure it can be several arcsec from the
+    # region centre, and must not be masked as a neighbour.
+    near = [(d['mag'], i) for i, d in enumerate(dets)
+            if det_pos[i].separation(catpos).arcsec <= SEARCH_RADIUS + 2]
+    target = min(near)[1] if near else None
+
+    # the masks: sized once per observation and filter, on its deepest
+    # exposure (aspect-corrected preferred, as uvotdetect's)
+    masks_info = {}
+    radii = [(exclusion_radius(d['mag']), 'no') for d in dets]
+    sky_sb = None
+    try:
+        deep = max(rows, key=lambda r: (r['aspcorr'] == 'DIRECT',
+                                        float(r['exposure'])))
+        hdu = sky[int(deep['hdu'])]
+        sky_sb, radii = file_masks(
+            hdu.data, ex_by_name[deep['extname']].data, hdu.header,
+            WCS(hdu.header), abs(hdu.header['CDELT1']) * 3600.0, src_ra,
+            src_dec, dets, profiles.get(deep['filter']))
+        masks_info = {'sky': sky_sb, 'radii': radii}
+    except Exception as exc:
+        masks_info = {'error': '%s: %s' % (exc.__class__.__name__, exc)}
+
     for row in rows:
         out = {k: row.get(k) for k in ('obsid', 'filter', 'hdu', 'extname',
                                        'aspcorr', 'mode', 'first')}
         reasons = []
+        if 'error' in masks_info:
+            reasons.append('mask sizes not measured (%s): uvotlc radii'
+                           % masks_info['error'])
         try:
             hdu = sky[int(row['hdu'])]
             h, data = hdu.header, hdu.data
@@ -382,34 +680,58 @@ def process_file(args):
             wcs = WCS(h)
             scale = abs(h['CDELT1']) * 3600.0
             x0, y0 = [float(v) for v in wcs.world_to_pixel_values(src_ra, src_dec)]
-            meas = measure_source(data, wcs, scale, x0, y0)
+            det_xy = [[float(v) for v in wcs.world_to_pixel_values(d['ra'],
+                                                                   d['dec'])]
+                      for d in dets]
+
+            def geometry(centre):
+                """Mask circles and strips (pixels) around a centre."""
+                masks, strips = [], []
+                cx_, cy_ = [float(v) for v in wcs.world_to_pixel_values(
+                    centre.ra.deg, centre.dec.deg)]
+                for i, d in enumerate(dets):
+                    sep = det_pos[i].separation(centre).arcsec
+                    radius, bright = radii[i]
+                    if bright == 'yes':
+                        vx, vy = readout_direction(h, *det_xy[i])
+                        strips.append((det_xy[i][0], det_xy[i][1], vx, vy,
+                                       sep + max(OFFSET_DISTANCES)
+                                       + OFFSET_RADIUS))
+                    if i == target or sep <= SAME_SOURCE:
+                        continue
+                    masks.append((det_xy[i][0], det_xy[i][1], radius))
+                return masks, strips
+
+            masks, strips = geometry(catpos)
+            bkg0 = background(data, expmap, scale, x0, y0, masks, strips)
+            meas = measure_source(data, wcs, scale, x0, y0, bkg0['mean'])
             center_ra, center_dec, center = src_ra, src_dec, 'catalog'
             if meas is None:
                 reasons.append('no source signal near the position')
             else:
+                out['snr'] = '%.1f' % meas['snr']
                 c = wcs.pixel_to_world(meas['x'], meas['y'])
-                cat = SkyCoord(src_ra, src_dec, unit='deg')
-                offset = c.separation(cat).arcsec
-                out.update({
-                    'snr': '%.1f' % meas['snr'],
-                    'offset': '%.2f' % offset,
-                    'd_ra': '%+.2f' % ((c.ra.deg - src_ra) * 3600.0
-                                       * math.cos(math.radians(src_dec))),
-                    'd_dec': '%+.2f' % ((c.dec.deg - src_dec) * 3600.0),
-                    'axis_ratio': '%.2f' % meas['axis_ratio'],
-                    'sig_major': '%.2f' % meas['sig_major'],
-                    'sig_minor': '%.2f' % meas['sig_minor'],
-                    'major_pa': '%.0f' % meas['major_pa'],
-                })
+                offset = c.separation(catpos).arcsec
                 if meas['snr'] < MIN_SNR:
-                    reasons.append('S/N %.1f: region at --ra/--dec'
+                    reasons.append('S/N %.1f: no shape; region at --ra/--dec'
                                    % meas['snr'])
-                elif offset > MAX_SHIFT:
-                    reasons.append('centroid %.1f arcsec away: region at '
-                                   '--ra/--dec' % offset)
                 else:
-                    center_ra, center_dec, center = c.ra.deg, c.dec.deg, \
-                        'centroid'
+                    out.update({
+                        'offset': '%.2f' % offset,
+                        'd_ra': '%+.2f' % ((c.ra.deg - src_ra) * 3600.0
+                                           * math.cos(math.radians(src_dec))),
+                        'd_dec': '%+.2f' % ((c.dec.deg - src_dec) * 3600.0),
+                        'axis_ratio': '%.2f' % meas['axis_ratio'],
+                        'sig_major': '%.2f' % meas['sig_major'],
+                        'sig_minor': '%.2f' % meas['sig_minor'],
+                        'major_pa': '%.0f' % meas['major_pa'],
+                    })
+                    if offset > MAX_SHIFT:
+                        reasons.append('centroid %.1f arcsec away: region at '
+                                       '--ra/--dec' % offset)
+                    else:
+                        center_ra, center_dec, center = c.ra.deg, c.dec.deg, \
+                            'centroid'
             ovr = matching_overrides(overrides, row)
             if 'src' in ovr:
                 value, lineno = ovr['src']
@@ -422,15 +744,41 @@ def process_file(args):
                         'src_dec': '%.6f' % center_dec})
             cx, cy = [float(v) for v in wcs.world_to_pixel_values(center_ra,
                                                                   center_dec)]
+            centre = SkyCoord(center_ra, center_dec, unit='deg')
+            if (cx, cy) != (x0, y0):
+                masks, strips = geometry(centre)
+                bkg = background(data, expmap, scale, cx, cy, masks, strips)
+            else:
+                bkg = bkg0
+            if bkg['note']:
+                reasons.append(bkg['note'])
+            if detections is None:
+                reasons.append('no source list (uvotdetect failed): no '
+                               'exclusions')
+
             # How much of the source light near the region is inside it:
             # trailed and smeared images lose light the axis ratio can miss.
-            conc, snr15 = concentration(data, scale, cx, cy)
-            if conc is not None and snr15 >= MIN_SNR:
+            # Reported only where it is precise enough to judge.
+            if bkg['npix']:
+                b = bkg['mean']
+                conc, conc_err = concentration(
+                    data, scale, cx, cy, b,
+                    b / bkg['npix'] + (SKY_SYSTEMATIC * b) ** 2)
+            else:
+                conc, conc_err = None, None
+            if conc is not None and conc_err <= CONC_ERR_MAX:
                 out['conc'] = '%.2f' % conc
+                out['conc_err'] = '%.3f' % conc_err
                 if conc < CONC_MIN:
                     reasons.append('only %.0f%% of the counts within 15 arcsec '
                                    'are in the 5 arcsec circle: trailed or '
                                    'smeared' % (100 * conc))
+            elif conc is not None:
+                reasons.append('concentration not measured (error %.2f > '
+                               '%.2f)' % (conc_err, CONC_ERR_MAX))
+            else:
+                reasons.append('concentration not measured (no net counts '
+                               'within 15 arcsec)')
 
             detx, dety, rawx, rawy = detector_position(h, center_ra, center_dec)
             out.update({'detx': '%.1f' % detx, 'dety': '%.1f' % dety})
@@ -438,33 +786,9 @@ def process_file(args):
                 val = sss[lvl]['SSSENS' + row['filter']].data[
                     int(rawy + 0.5), int(rawx + 0.5)]
                 out['sss_%s' % lvl.lower()] = '%.1f' % val
-
-            # background
-            excl = []
-            dets = detections or []
-            centre = SkyCoord(center_ra, center_dec, unit='deg')
-            catpos = SkyCoord(src_ra, src_dec, unit='deg')
-            # Your source is the brightest detection within 10" of --ra/--dec:
-            # in a trailed or mis-pointed exposure it can be several arcsec
-            # from the region centre, and must not be masked as a neighbour.
-            near = [(mag, i) for i, (ra_d, dec_d, mag) in enumerate(dets)
-                    if SkyCoord(ra_d, dec_d, unit='deg').separation(catpos)
-                    .arcsec <= SEARCH_RADIUS + 2]
-            target = min(near)[1] if near else None
-            for i, (ra_d, dec_d, mag) in enumerate(dets):
-                if i == target or SkyCoord(ra_d, dec_d, unit='deg').separation(
-                        centre).arcsec <= SAME_SOURCE:
-                    continue
-                ex_x, ex_y = [float(v) for v in wcs.world_to_pixel_values(ra_d,
-                                                                          dec_d)]
-                excl.append((ex_x, ex_y, exclusion_radius(mag)))
-            if detections is None:
-                reasons.append('no source list (uvotdetect failed): no '
-                               'exclusions')
-            btype, bgeom, area, n_excl, note = choose_background(
-                expmap, wcs, scale, cx, cy, excl)
-            if note:
-                reasons.append(note)
+            frac = sss_low_fraction(h, scale, cx, cy,
+                                    sss['LOW']['SSSENS' + row['filter']].data)
+            out['sss_low_frac'] = '%.2f' % frac
 
             reg_dir = os.path.join(outdir, 'regions', row['obsid'])
             os.makedirs(reg_dir, exist_ok=True)
@@ -473,31 +797,33 @@ def process_file(args):
             with open(src_reg, 'w') as fh:
                 fh.write('fk5;circle(%.6f,%.6f,%.1f")\n'
                          % (center_ra, center_dec, SRC_RADIUS))
-            lines = []
+            btype, area = bkg['type'], bkg['area']
+            n_excl, n_strip, n_sect = (len(bkg['masks']), len(bkg['strips']),
+                                       len(bkg['sectors']))
             if 'bkg' in ovr:
                 value, lineno = ovr['bkg']
                 lines = ['fk5;' + value]
-                btype, area, n_excl = 'override:%d' % lineno, float('nan'), 0
-            elif btype == 'annulus':
-                lines = ['fk5;annulus(%.6f,%.6f,%.1f",%.1f")'
-                         % (center_ra, center_dec, BKG_INNER, BKG_OUTER)]
-                for ex_x, ex_y, er in bgeom:
-                    p = wcs.pixel_to_world(ex_x, ex_y)
-                    lines.append('fk5;-circle(%.6f,%.6f,%.1f")'
-                                 % (p.ra.deg, p.dec.deg, er))
-            elif btype == 'circle':
-                ox, oy = bgeom[0]
-                p = wcs.pixel_to_world(ox, oy)
-                lines = ['fk5;circle(%.6f,%.6f,%.1f")'
-                         % (p.ra.deg, p.dec.deg, OFFSET_RADIUS)]
+                btype, area = 'override:%d' % lineno, float('nan')
+                n_excl = n_strip = n_sect = 0
+            else:
+                lines = background_lines(wcs, scale, center_ra, center_dec,
+                                         cx, cy, bkg)
             if lines:
                 with open(bkg_reg, 'w') as fh:
                     fh.write('\n'.join(lines) + '\n')
             elif os.path.exists(bkg_reg):
                 os.remove(bkg_reg)
+            # Step 4's background in the 5" circle, counts/s: compare with
+            # Step 5's (uvotsource on the same regions)
+            bkg5 = '-'
+            if bkg['type'] in ('annulus', 'circle') and 'bkg' not in ovr:
+                bkg5 = '%.5f' % (bkg['mean'] * math.pi * SRC_RADIUS ** 2
+                                 / scale ** 2 / bkg['ref'])
             out.update({'bkg_type': btype,
                         'bkg_area': '-' if area != area else '%.0f' % area,
-                        'n_excl': n_excl,
+                        'n_excl': n_excl, 'n_strip': n_strip,
+                        'n_sect': n_sect, 'bkg5': bkg5,
+                        'sky': '-' if sky_sb is None else '%.3e' % sky_sb,
                         'src_reg': os.path.relpath(src_reg, outdir),
                         'bkg_reg': os.path.relpath(bkg_reg, outdir)
                         if lines else '-'})
@@ -507,14 +833,17 @@ def process_file(args):
             reasons.append('%s: %s' % (exc.__class__.__name__, exc))
         out['reason'] = '; '.join(reasons)
         results.append(out)
-    return results
+    key = (rows[0]['obsid'], rows[0]['filter'])
+    return results, {key: masks_info}
 
 
 def run_detections(groups, outdir, nproc):
     """
     uvotdetect on the deepest candidate exposure of each observation and
     filter (aspect-corrected ones preferred). Returns ({(obsid, filter):
-    [(ra, dec, mag), ...] or None}, {(obsid, filter): reason}).
+    [detection, ...] or None}, {(obsid, filter): reason}); a detection is a
+    dict of ra, dec, mag, rate (coincidence-corrected counts/s), cpf (raw
+    counts per frame) and saturated.
     """
     calls, keys = [], []
     det_dir = os.path.join(outdir, 'detections')
@@ -536,17 +865,20 @@ def run_detections(groups, outdir, nproc):
             inputs={'sky.img.gz': sky, 'ex.img.gz': ex},
             outputs={'det.fits': dest}, timeout=600,
             log=dest.replace('.fits', '.log')))
-        keys.append((key, best['extname'], dest))
+        keys.append((key, float(best.get('frametime') or 0.011032), dest))
     results = run_many(calls, nproc=nproc)
     detections, problems = {}, {}
-    for (key, extname, dest), res in zip(keys, results):
+    for (key, frametime, dest), res in zip(keys, results):
         if not res.ok:
             detections[key] = None
             problems[key] = res.reason
             continue
         tab = fits.getdata(dest, 'SOURCES')
-        detections[key] = [(float(r['RA']), float(r['DEC']), float(r['MAG']))
-                           for r in tab]
+        detections[key] = [
+            {'ra': float(r['RA']), 'dec': float(r['DEC']),
+             'mag': float(r['MAG']), 'rate': float(r['COI_RATE']),
+             'cpf': float(r['RAW_TOT_RATE']) * frametime,
+             'saturated': bool(r['TOT_SATURATED'])} for r in tab]
     return detections, problems
 
 
@@ -561,8 +893,10 @@ def main(argv=None):
                         help='source Dec, decimal degrees (J2000)')
     parser.add_argument('--outdir', default='UVOT_output',
                         help='Step 3 output folder (default: UVOT_output)')
-    parser.add_argument('--nproc', type=int, default=8,
-                        help='parallel workers (default: 8)')
+    parser.add_argument('--nproc', type=int,
+                        default=uenv.default_nproc(),
+                        help='parallel workers (default: the CPUs this run may use, '
+                             'at most 8)')
     args = parser.parse_args(argv)
 
     uenv.require_heasoft_shell(['uvotdetect', 'quzcif'])
@@ -587,6 +921,7 @@ def main(argv=None):
 
     try:
         sss_paths = sss_map_paths()
+        profiles = wing_profiles()
     except RuntimeError as exc:
         print('ERROR: %s' % exc, file=sys.stderr)
         return 1
@@ -611,12 +946,16 @@ def main(argv=None):
         by_file[r['file']].append(r)
     jobs = [(path, rows, args.ra, args.dec,
              detections.get((rows[0]['obsid'], rows[0]['filter'])),
-             sss_paths, overrides, args.outdir)
+             sss_paths, profiles, overrides, args.outdir)
             for path, rows in sorted(by_file.items())]
     print('[info] measuring %d exposures in %d sky images ...'
           % (len(candidates), len(jobs)))
     with ProcessPoolExecutor(max_workers=max(1, args.nproc)) as pool:
-        rows = [r for part in pool.map(process_file, jobs) for r in part]
+        parts = list(pool.map(process_file, jobs))
+    rows = [r for part, _ in parts for r in part]
+    mask_sizes = {}
+    for _, info in parts:
+        mask_sizes.update(info)
     order = {(r['obsid'], r['filter'], r['extname']): i
              for i, r in enumerate(candidates)}
     # the ledger: every candidate must come back exactly once
@@ -631,13 +970,19 @@ def main(argv=None):
     src = SkyCoord(args.ra, args.dec, unit='deg')
     det_rows = []
     for (obsid, filt), dets in sorted(detections.items()):
-        for ra_d, dec_d, mag in dets or []:
-            sep = SkyCoord(ra_d, dec_d, unit='deg').separation(src).arcsec
+        info = mask_sizes.get((obsid, filt), {})
+        radii = info.get('radii') or [(exclusion_radius(d['mag']), 'no')
+                                      for d in dets or []]
+        for d, (radius, bright) in zip(dets or [], radii):
+            sep = SkyCoord(d['ra'], d['dec'], unit='deg').separation(src).arcsec
             if sep <= DETECTIONS_KEPT:
                 det_rows.append({'obsid': obsid, 'filter': filt,
-                                 'ra': '%.6f' % ra_d, 'dec': '%.6f' % dec_d,
-                                 'sep': '%.1f' % sep, 'mag': '%.2f' % mag,
-                                 'excl_radius': exclusion_radius(mag)})
+                                 'ra': '%.6f' % d['ra'], 'dec': '%.6f' % d['dec'],
+                                 'sep': '%.1f' % sep, 'mag': '%.2f' % d['mag'],
+                                 'rate': '%.4g' % d['rate'],
+                                 'cpf': '%.3f' % d['cpf'],
+                                 'bright': bright,
+                                 'mask_radius': '%.1f' % radius})
 
     counts = Counter(r['status'] for r in rows)
     prov = uenv.provenance()
@@ -651,22 +996,38 @@ def main(argv=None):
         '%d candidate exposures: %s' % (len(rows), ', '.join(
             '%s %d' % (k, v) for k, v in sorted(counts.items()))),
         'offset, d_ra, d_dec: centroid - (--ra, --dec), arcsec; axis_ratio, '
-        'sig_major/minor (arcsec), major_pa (deg E of N): source shape; '
-        'conc: net counts in the 5" region / in 15" (point source ~0.85)',
+        'sig_major/minor (arcsec), major_pa (deg E of N): source shape, '
+        'only at S/N >= %.0f' % MIN_SNR,
+        'conc, conc_err: net counts in the 5" region / in 15" (point source '
+        '0.86-0.92) and its error, only where the error is <= %.2f'
+        % CONC_ERR_MAX,
         'center: where the 5" source region is (centroid, catalog or an '
         'override line); sss_*: CALDB small-scale-sensitivity factor at the '
-        'source (-99.9 = low-sensitivity patch)',
-        'bkg_type: annulus (27.5-35" minus n_excl source circles), circle '
-        '(15" offset circle), override, or none; bkg_area in arcsec^2',
+        'source (-99.9 = low-sensitivity patch); sss_low_frac: fraction of '
+        'the 5" circle on a LOW patch',
+        'bkg_type: annulus (27.5-35" minus n_excl source circles, n_strip '
+        'read-out strips and n_sect bright sectors), circle (15" offset '
+        'circle), override, or none; bkg_area in arcsec^2; bkg5: that '
+        'background in the 5" circle, counts/s; sky: counts/s/arcsec^2 '
+        'the mask radii were set against',
     ]
     pos_path = os.path.join(args.outdir, 'uvot_positions.txt')
     write_table(pos_path, rows, COLUMNS, comments)
     det_path = os.path.join(args.outdir, 'uvot_detections.txt')
     write_table(det_path, det_rows, ['obsid', 'filter', 'ra', 'dec', 'sep',
-                                     'mag', 'excl_radius'],
-                comments[:4] + ['uvotdetect sources within %.0f" of the source '
-                                'in the deepest exposure of each observation '
-                                'and filter' % DETECTIONS_KEPT])
+                                     'mag', 'rate', 'cpf', 'bright',
+                                     'mask_radius'],
+                comments[:4] + [
+                    'uvotdetect sources within %.0f" of the source in the '
+                    'deepest exposure of each observation and filter'
+                    % DETECTIONS_KEPT,
+                    'rate: coincidence-corrected counts/s; cpf: raw counts per '
+                    'frame; bright: yes if cpf >= %.1f or saturated (mask %.0f" '
+                    'and a read-out strip), halo if within %.0f" of a source '
+                    '%.0fx brighter (uvotlc radius); mask_radius: arcsec, '
+                    'where the PSF wing falls below %.1f%% of the sky' % (
+                        BRIGHT_CPF, MASK_MAX, HALO_REACH, HALO_RATIO,
+                        100 * WING_FRACTION)])
 
     # --- report -------------------------------------------------------------
     print()
@@ -697,6 +1058,18 @@ def main(argv=None):
           'trailed or smeared): %d, of which %d event-mode snapshot openers'
           % (CONC_MIN, len(lost), sum(1 for r in lost if r['mode'] == 'EVENT'
                                       and r['first'] == 'yes')))
+    print('[summary] background: %d with read-out strips, %d with bright '
+          'sectors dropped (%d sectors)' % (
+              sum(int(r.get('n_strip') or 0) > 0 for r in rows),
+              sum(int(r.get('n_sect') or 0) > 0 for r in rows),
+              sum(int(r.get('n_sect') or 0) for r in rows)))
+    nconc = sum(r.get('conc') not in (None, '-') for r in rows)
+    print('[summary] concentration measured (error <= %.2f): %d of %d'
+          % (CONC_ERR_MAX, nconc, len(rows)))
+    edge = [r for r in rows if r.get('sss_low_frac') not in (None, '-')
+            and float(r['sss_low_frac']) > SSS_EDGE_FRACTION]
+    print('[summary] more than %.0f%% of the 5" circle on a LOW patch: %d'
+          % (100 * SSS_EDGE_FRACTION, len(edge)))
     faint = [r for r in rows if r['status'] != 'failed' and (
         r.get('snr') in (None, '-') or float(r['snr']) < MIN_SNR)]
     print('[summary] S/N < %.0f at the source: %d (faint, or its light is '

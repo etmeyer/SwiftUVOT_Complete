@@ -38,7 +38,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
-from matplotlib.patches import Circle
+from matplotlib.patches import Circle, Polygon
 from astropy.io import fits
 from astropy.time import Time
 from astropy.wcs import WCS, FITSFixedWarning
@@ -52,7 +52,7 @@ CUTOUT = 45.0       # arcsec half-width of a cutout
 JITTER = (2023.6, 2024.26)  # spacecraft jitter, Aug 2023 - Apr 2024 (GCN)
 NCOL, NROW = 6, 4   # cutouts per page
 FILTERS = ('V', 'B', 'U', 'UVW1', 'UVM2', 'UVW2')
-_REGION = re.compile(r'(-?)(circle|annulus)\(([^)]*)\)')
+_REGION = re.compile(r'(-?)(circle|annulus|polygon)\(([^)]*)\)')
 
 
 def _open_fits(path):
@@ -63,7 +63,10 @@ def _open_fits(path):
 
 
 def read_regions(path):
-    """[(exclude?, shape, ra, dec, radii arcsec...)] from our region files."""
+    """
+    [(exclude?, shape, ra, dec, values...)] from our region files: values
+    are radii in arcsec, or for a polygon the other vertices' ra, dec.
+    """
     shapes = []
     if not path or path == '-' or not os.path.exists(path):
         return shapes
@@ -102,6 +105,12 @@ def draw_cutout(ax, data, wcs, scale, row, outdir, src_ra, src_dec):
             os.path.join(outdir, row['bkg_reg']) if row['bkg_reg'] != '-'
             else None):
         px, py = pix(ra, dec)
+        if shape == 'polygon':
+            pts = [(px, py)] + [pix(a, d) for a, d in zip(radii[::2],
+                                                          radii[1::2])]
+            ax.add_patch(Polygon(pts, closed=True, fill=False, lw=0.8,
+                                 color='c', ls='--' if excl else '-'))
+            continue
         for rad in radii:
             ax.add_patch(Circle((px, py), rad / scale, fill=False, lw=0.8,
                                 color='c', ls='--' if excl else '-'))

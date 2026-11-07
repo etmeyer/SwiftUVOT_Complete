@@ -203,3 +203,15 @@ def provenance():
         'UVOTINDX': uvot_caldb_index(caldb) or 'unknown',
         'PIPECOMM': pipeline_commit(),
     }
+
+
+def default_nproc(most=8):
+    """
+    Parallel workers by default: the CPUs this process may run on (taskset,
+    cgroups), at most `most`. On a shared machine, pinning the shell with
+    taskset is then enough to keep a run on your own cores.
+    """
+    try:
+        return max(1, min(most, len(os.sched_getaffinity(0))))
+    except AttributeError:      # not Linux
+        return max(1, min(most, os.cpu_count() or 1))

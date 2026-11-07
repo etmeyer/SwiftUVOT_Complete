@@ -31,7 +31,8 @@ documentation):
                     LOW: 5 % low on average; MID-only patches 1 %)
     off_centre      the source was found more than 3" from the region
                     centre, so Step 4 left the region at --ra/--dec
-    smeared         concentration (5"/15" counts) below 0.78
+    smeared         concentration (5"/15" counts) below 0.82 (not applied
+                    to saturated exposures: their rate is a lower limit)
     elongated       axis ratio above 1.5
     jitter          taken during the 2023-24 spacecraft jitter with no
                     measurable PSF (otherwise the shape rules decide)
@@ -39,7 +40,8 @@ documentation):
     override:N      excluded by line N of uvot_overrides.txt
 
 Flags (noted, not excluding): sss_mid / sss_high (patch at a level the rule
-does not exclude), jitter_ok (jitter period, PSF check passed), high_coi
+does not exclude), sss_edge (centre clear, but more than 10 % of the 5"
+circle on a LOW patch), jitter_ok (jitter period, PSF check passed), high_coi
 (U above 0.90 counts per frame: about 8 % low), no_aspcorr, short
 (exposure under 20 s), discrepant (differs from the rest of its
 observation by more than 10 % and 5 sigma), override:N (included by line N,
@@ -78,7 +80,7 @@ SATURATION = 0.98               # uvotsource caps counts per frame here
 COINCIDENCE_LIMIT = {'U': SATURATION}
 DEFAULT_COINCIDENCE_LIMIT = 0.95
 COI_FLAG_LIMIT = {'U': 0.90}
-CONC_MIN = 0.78                 # 5"/15" counts: 3 % low at 0.75-0.78
+CONC_MIN = 0.82                 # 5"/15" counts (masked-mean background)
 AXIS_RATIO_MAX = 1.5            # 5-12 % low above 1.5
 SHORT_EXPOSURE = 20.0           # s
 # an included exposure this far from the rest of its observation (and
@@ -88,6 +90,7 @@ DISCREPANT_FRACTION, DISCREPANT_SIGMA = 0.10, 5.0
 # until UVOT was re-enabled in two-gyro mode on 2024-04-04 (GCN 36033)
 JITTER = ('2023-08-07', '2024-04-04')
 SSS_LEVELS = ('LOW', 'MID', 'HIGH')
+SSS_EDGE_FRACTION = 0.10        # of the 5" circle on a LOW patch: flagged
 OVERRIDES_FILE = 'uvot_overrides.txt'
 FILTERS = ('V', 'B', 'U', 'UVW1', 'UVM2', 'UVW2')
 # for the plot, an excluded exposure is shown under its first rule here
@@ -167,11 +170,15 @@ def judge(inv, pos, phot, sss_level, limits):
         rules.append('sss')
     elif on_patch:
         flags.append('sss_%s' % on_patch[0].lower())
+    if 'sss' not in rules and _num(pos.get('sss_low_frac')) > SSS_EDGE_FRACTION:
+        flags.append('sss_edge')
     snr = _num(pos['snr'])
     if pos['center'] == 'catalog' and snr >= 10:
         rules.append('off_centre')
     conc, ar = _num(pos['conc']), _num(pos['axis_ratio'])
-    if conc < CONC_MIN:
+    # Coincidence loss flattens a saturated source's core (0.80-0.81), and
+    # a saturated rate is a lower limit whatever light the region misses.
+    if conc < CONC_MIN and 'saturated' not in rules:
         rules.append('smeared')
     if ar > AXIS_RATIO_MAX:
         rules.append('elongated')
