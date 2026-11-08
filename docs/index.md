@@ -18,7 +18,7 @@ It is the companion to the Swift XRT pipeline
 | [4. Positions and regions](04-positions.md) | Measure the source position, shape and concentration in each exposure; flag trailed and smeared images and sensitivity patches; write source and background regions; contact sheets (`swift_uvot_positions.py`, `swift_uvot_viewer.py`) |
 | [5. Photometry](05-photometry.md) | Run `uvotsource` on every exposure, keeping every number and flag; plot every exposure's rate against time, marked by what Step 6 will judge (`swift_uvot_photometry.py`) |
 | [6. Master table](06-master-table.md) | Apply the quality rules, calibrated on 3C 273, and your overrides; one row per exposure with the rules that excluded it (`make_uvot_master_table.py`) |
-| [7. Light curve](07-lightcurve.md) | Combine the included exposures into one point per observation and filter: detections, upper limits and saturated lower limits; magnitudes and flux densities; plot (`swift_uvot_lightcurve.py`) |
+| [7. Light curve](07-lightcurve.md) | Combine the included exposures into one point per observation and filter (weights from expected counts, background systematic): Poisson detection, KBN upper limits, sensitivity and saturated lower limits; magnitudes and flux densities; plot (`swift_uvot_lightcurve.py`) |
 
 A per-exposure light curve (for short-timescale variability) is a planned extension.
 

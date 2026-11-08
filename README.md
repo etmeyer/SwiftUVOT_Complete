@@ -191,16 +191,21 @@ make_uvot_master_table.py [--outdir UVOT_output] [--sss-level LOW|MID|HIGH]
 
 ### `swift_uvot_lightcurve.py`
 
-Combines the included exposures into one point per observation and filter
-(inverse-variance mean with a 1.5 % systematic floor per exposure, measured
-from 3C 273), with a status each: detected, upper limit, lower limit (all
-saturated), excluded, not covered. Count rates, Vega and AB magnitudes and
-flux densities with `uvotsource`'s own conversion; flags carried from the
-exposures. Output: `UVOT_output/uvot_lightcurve.txt` and
+Combines the included exposures into one point per observation and filter,
+with weights from the counts each exposure is expected to have (unbiased for
+faint sources; the same as inverse-variance weights for bright ones), a 1.5 %
+floor on the combined rate (measured from 3C 273) and an additive background
+systematic per filter (measured on blank sky). Detection from the Poisson
+probability of the summed counts; upper limits by Kraft, Burrows & Nousek
+(99.87 %); a 3σ sensitivity column. Statuses: detected, upper limit, lower
+limit (all saturated), excluded, not covered. Count rates, Vega and AB
+magnitudes and flux densities with `uvotsource`'s own conversion; flags
+carried from the exposures. Output: `UVOT_output/uvot_lightcurve.txt` and
 `uvot_lightcurve.pdf`.
 
 ```
 swift_uvot_lightcurve.py [--outdir UVOT_output] [--floor 0.015] [--nsigma 3]
+                         [--bkg-sys FILTER=VALUE,...]
 ```
 
 ### `swift_uvot_runner.py`, `swift_uvot_env.py`, `swift_uvot_tables.py`

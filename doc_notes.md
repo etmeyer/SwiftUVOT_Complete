@@ -412,3 +412,48 @@ Logged during **PR1a** (Step 4 background for faint targets; branch
   than the 5″ aperture — and Step 6 includes them with the flag only.
   PKS 0537−286 reads ~0 there too. A bright target re-centres itself; a
   faint one cannot. The field-star check would catch these.
+
+Logged during **PR2** (Step 7 combining, detection and limits; branch
+`pr2-step7-combining`; validation scripts in `_dev_internal/pr2_validation/`).
+
+- **ε corrected.** PR1a's ε (V 1.1 … UVM2 9.0 %) was measured on every
+  exposure Step 4 processed, including those Step 6 excludes (LOW patches,
+  jitter), and with uvotsource's per-exposure errors. Re-measured on the
+  included exposures only, through the new combination: V 0, B 1.8 %,
+  U 1.8 %, UVW1 0, UVM2 0, UVW2 2.6 % (the larger of the std- and
+  MAD-based values; 26 empty positions; per filter 337–623 points). The
+  UV errors were already slightly large (pull std 0.89–0.94 at ε = 0).
+- **ε scales with what?** Splitting the blank points into background
+  terciles gives no clean answer (neither a fixed fraction nor a fixed
+  rate). One observation shows the cost of a single global value:
+  00030816012 B has 8,400 background counts in the aperture (a high-
+  background 2008 visit); its blank positions scatter 1.33× their errors,
+  so the right ε there is ~1.1 %, and the global 1.8 % turns its S/N 4.9
+  detection into a 2.5σ limit (with ε 1.1 % it would be ~3.7σ). Idea for
+  later: an empirical per-observation background scatter from random
+  positions in the same exposures (costs ~30 uvotsource calls per
+  exposure).
+- **Blank sky through the new Step 7** (ε as above, floor 1.5 %): bias of
+  the combined points +0.03 (V) … −0.07σ (UVM2); false detections 0 in
+  V/B/U/UVM2, 1 each in UVW1 and UVW2 (0.26–0.28 %, n ≈ 360–390; expect
+  0.135 %).
+- **3C 273 vs PR1a:** median shift 0.000σ, 95 % within 0.044σ; the 11
+  groups moving more than 0.1σ are exactly the cross-check's pre-listed
+  ones (00089029001 U +0.90σ, 00050900026 UVM2 +0.44σ, 00091742009 UVW2
+  +0.44σ, …), all upward, all with χ²_red 1.7–12.7. Errors unchanged
+  (median ratio 1.000). Weights converge in ≤ 4 iterations.
+- **PKS 0537−286 vs PR1a:** 25 of 26 moves > 0.1σ are upward (UV up to
+  +1.3σ). Status changes: 00030816012 B and 00036783002 U detected →
+  limit; 00036783011 U limit → detected (det_sigma 3.2). No UV detection.
+- **Known stars (E6) through the new Step 7:** combined-point bias −0.01
+  to −0.09σ (old −0.10 to −0.24σ); no upper limit below a star's truth
+  (old: 3); UVM2 detections 69 → 86, UVW1 139 → 147, UVW2 119 → 136.
+- **Reference values in the smoke test:** KBN for B = 10, N = 9.6/10/10.4
+  → 14.07/14.52/14.98 (the cross-check's `kbn.py`); integer N checked
+  against direct integration of the posterior; B = 1e4, net 0 → 3.24σ.
+- **Faint Monte Carlo** (`mc_faint.py`, 40,000 groups per case, through
+  `combine()` itself; UVM2-, UVW1-, U-, V-like groups and single short
+  UVW2 exposures): bias −0.004 to +0.008σ (MC precision ±0.005σ; old
+  inverse-variance mean −0.05 to −1.07σ); false detections at S = 0
+  0.08–0.11 % (nominal 0.135 %); KBN limit below the truth in ≤ 0.143 %
+  of all groups (nominal 0.135 %; 57 events where 54 are expected).
