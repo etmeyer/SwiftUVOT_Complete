@@ -17,6 +17,7 @@ swift_uvot_lightcurve.py
 | `--outdir` | Steps 3–6's output folder (default `UVOT_output`) |
 | `--floor` | Systematic error per exposure, as a fraction of the combined rate (default 0.015) |
 | `--nsigma` | Detection threshold in Gaussian σ; also sets the upper-limit confidence (3 → 99.87 %) and the sensitivity (default 3; 1–8) |
+| `--psf-correct` | Divide each exposure whose own shape was not measured by the light its field stars say the 5″ circle kept (1 − `psf_loss`, Step 4), adding an error of 0.4 × the loss (default: off) |
 | `--bkg-sys` | Additive background systematic, as a fraction of the background in the aperture: one number for all filters, or e.g. `V=0.01,UVM2=0.05`; `0` switches it off (default: measured per filter, below) |
 
 ## How it works
@@ -132,7 +133,18 @@ a filter together.
 
 **Flags** carried from the exposures: `high_coi` (U, probably about 8 % low),
 `jitter_ok` (taken during the 2023–24 jitter, PSF check passed),
-`discrepant`, `sss_mid`, `sss_high`; and `scatter`.
+`discrepant`, `sss_mid`, `sss_high`, and from the field stars `psf_broad`
+(at least 3 % of the light lost to a broad PSF), `psf_unchecked`,
+`recentred`, `pointing_unsure`; and `scatter`, and `psf_corrected` with
+`--psf-correct`.
+
+**PSF correction** (`--psf-correct`, off by default). A `psf_broad` point
+is low by roughly its loss. With the option, each exposure whose own shape
+was not measured is divided by 1 − `psf_loss` before combining (never by
+more than 5×; a loss slightly below zero, which is noise, corrects down as
+much as one above zero corrects up), and its error gets 0.4 × the loss in
+quadrature: on stars of known flux the corrected rates scatter that much
+(Step 4). Without it the plot rings `psf_broad` points in red.
 
 For all of 3C 273:
 

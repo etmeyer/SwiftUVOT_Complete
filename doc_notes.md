@@ -457,3 +457,57 @@ Logged during **PR2** (Step 7 combining, detection and limits; branch
   inverse-variance mean −0.05 to −1.07σ); false detections at S = 0
   0.08–0.11 % (nominal 0.135 %); KBN limit below the truth in ≤ 0.143 %
   of all groups (nominal 0.135 %; 57 events where 54 are expected).
+
+Logged during **PR1b** (Gaia field stars: pointing and PSF; branch
+`pr1b-field-stars`; scripts in `_dev_internal/pr1b_validation/`).
+
+- **Gaia access:** the ESA archive's synchronous TAP queue was full
+  ("maximum number of synchronous queued jobs (150) reached"); the
+  asynchronous endpoint answered in ~2 s. VizieR's TAP was unreachable
+  from this machine. Step 4 uses ESA async and caches `uvot_gaia.txt`.
+- **Unaspected pointing is far worse than assumed.** PKS 0537−286's
+  00035240001 snapshot 2 (V, UVW1, UVM2, UVW2; 2005-11-24, ASPCORR NONE)
+  is off by (+54″, +198″) = 3.4′, no rotation, the same in all four
+  filters (to ~6″). A first prototype searched only ±20″ and reported
+  7.6–10.6″ from chance alignments; an image cross-correlation against the
+  aspected V image and peak-to-Gaia offset voting over ±5′ both give
+  3.4′, and the brightest Gaia stars sit at the corrected positions
+  (~1,000 counts vs ~5). With the true pointing PKS 0537−286 is outside
+  the exposed field: the exposures are `not_covered`, not re-centred.
+  Step 3's coverage test used the wrong WCS; Step 4 now re-judges it.
+- **Registration method:** summed box flux at the Gaia positions over a
+  shift grid fails (one bright star in a box wins); normalising each
+  star's vote fails in short exposures (noise wins). Pairing the 60
+  brightest image peaks with all Gaia sources within ±5′ and voting on
+  the offset (2″ bins) works: 13–32 votes vs ≤ 6 for random offsets in
+  the PKS field; synthetic test recovers 0″, 2.9″ and 3.4′ to 0.01″.
+- **PSF loss vs stars of known flux** (E6 stars, `psf_vs_stars.py`):
+  tracks 1 − psf_loss on average up to 30 % loss (bins differ by
+  +0.002 … +0.08), scatter ~0.4 × loss; one exposure at 38 % predicted
+  read only 16 % low. Flag-only default; `--psf-correct` carries 0.4 ×
+  loss as error, and corrects symmetrically around zero loss.
+- **PSF stars:** S/N ≥ 20 (the plan said 40: that left 2–3 stars per
+  exposure in the PKS field), ≤ 0.3 counts/frame, conc error ≤ 0.05,
+  weighted mean of relative concentrations with a 1 % star-to-star floor.
+  UVM2 often has none: borrows the snapshot's other filters, with their
+  spread as the error (V 5 % vs B 22 % loss in one jitter snapshot).
+- **PKS 0537−286:** 344 of 368 included (was 312): +36 jitter-period
+  exposures (field stars give PSF and pointing), −4 unaspected
+  (`step4:not_covered`). Losses match the research (F6): flare
+  00030816013 V 7 %, UV 6–10 %; jitter 8–40 %; 00030816018 snapshot 2
+  normal; 00030816019 V/B/U 3–7 %. Light curve: V 16, B 15, U 10
+  detections (was 14, 13, 10); the new ones are jitter-period points
+  flagged `psf_broad`.
+- **Not done (later):** a viewer contact sheet of the field stars; field-
+  star astrometry beyond the offset (rotation, distortion); the 3″
+  aperture that needs both.
+- **3C 273 vs PR1a: no include changes** (2102 included; light curve
+  statuses identical). 8 already-excluded jitter exposures also get
+  `jitter` (untrusted pointing). 00035017085 U (one of the three
+  "centroid 3.2–3.35″ away" exposures of the Step 4 follow-up): the
+  snapshot's field stars correct its pointing by 1.4″, the centroid is
+  then accepted and it reads 396 instead of 251 counts/s; still excluded
+  (saturated). Pointing measured in 1,003 exposures (+1,561 from the
+  snapshot; sparse field); aspected offsets 0.24″ median. 2 bright-source
+  V exposures without a measured concentration are flagged `psf_broad`
+  (11 %); 24 `psf_unchecked`.

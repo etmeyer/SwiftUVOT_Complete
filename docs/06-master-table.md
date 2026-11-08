@@ -21,6 +21,7 @@ make_uvot_master_table.py
 | `--outdir` | Steps 3–5's output folder (default `UVOT_output`) |
 | `--sss-level` | Exclude exposures on a low-sensitivity patch at this level or a stricter one: `LOW` (default), `MID` or `HIGH` |
 | `--coincidence-limit FILTER=VALUE` | Change a filter's counts-per-frame limit (default 0.95; U only at the saturation cap, 0.98); can be repeated |
+| `--psf-max-loss FRACTION` | Exclude (rule `psf`) exposures whose field stars show a larger loss of the 5″ circle, when the source's own shape cannot be measured (default: off, flag only) |
 
 ## How it works
 
@@ -37,7 +38,8 @@ come from the 3C 273 data, as described below.
 | `off_centre` | source found more than 3″ from the region centre, so Step 4 left the region at `--ra`/`--dec` | the region misses the source: rates 0.30 of the truth |
 | `smeared` | concentration (5″/15″ counts, Step 4) below 0.82; not applied to saturated exposures, whose flattened cores read 0.80–0.81 and whose rates are lower limits anyway | light outside the 5″ region: clean exposures are at 0.84 and above (95 %); the two below 0.82 read 5 % and 16 % low |
 | `elongated` | axis ratio above 1.5 | trailed: 5–12 % low |
-| `jitter` | taken during the spacecraft jitter (7 August 2023 – 4 April 2024) with no measurable PSF | the image cannot be checked |
+| `psf` | only with `--psf-max-loss`: the source's own shape is not measurable and the field stars show a larger loss | your choice of how much loss to accept |
+| `jitter` | taken during the spacecraft jitter (7 August 2023 – 4 April 2024) without a PSF check (the source's own shape, or the field stars') or without a pointing it can trust (aspect correction, the source's centroid, or the field stars) | the image cannot be checked |
 | `duplicate` | same `EXPID` as an included exposure (image- and event-mode copy) | counted once |
 | `override:N` | excluded by line N of the overrides file | your decision |
 
@@ -45,6 +47,14 @@ Exposures with low S/N are *not* excluded: for a faint source they are the
 non-detections Step 7 turns into upper limits. In the jitter period an
 exposure whose PSF can be measured is judged by the shape rules like any
 other.
+
+**Faint sources: the field stars decide the PSF, as a flag.** When the
+source's own concentration cannot be measured (Step 4 reports it only to
+±0.02), the field stars' `psf_loss` (Step 4) says how much light a broad
+PSF pushes out of the 5″ circle. By default this only flags: excluding at
+a few per cent would throw away points like PKS 0537−286's 2022 flare
+(V loses 7 %, against a 22 % error), and Step 7 can correct instead
+(`--psf-correct`). `--psf-max-loss` turns the flag into a rule.
 
 **Flags** mark included exposures without excluding them:
 
@@ -55,7 +65,15 @@ other.
 - `high_coi`: U above 0.90 counts per frame. Kept, because for a bright
   source full-frame U is often the only U there is, but probably about 8 %
   low (full-frame U above 0.93 against windowed U of the same snapshot).
-- `no_aspcorr`: no aspect correction; the region is centred on the source.
+- `no_aspcorr`: no aspect correction. A bright source's region is centred
+  on the source itself, a faint source's by the field stars (`recentred`).
+- `psf_broad`: the source's own shape is not measurable, and the field stars
+  show the 5″ circle losing at least 3 % (at ≥ 2σ) to a broad PSF.
+- `psf_unchecked`: the source's own shape is not measurable and there are no
+  field stars to tell (none in the exposure or its snapshot).
+- `recentred`: Step 4 moved the regions by the field stars' pointing offset
+  (over 1″). `pointing_unsure`: that offset is uncertain by more than 1.5″
+  (borrowed from a snapshot whose filters disagree).
 - `short`: exposure under 20 s.
 - `discrepant`: the rate differs from the error-weighted mean of the rest of
   its observation and filter by more than 10 % and 5σ, both errors combined.
@@ -159,15 +177,15 @@ For all of 3C 273:
           UVW2          647       373                 153932
 [summary] exposures per rule (one exposure can break several):
           sss                        385, rate 0.94 of the included median (125 with one)
-          smeared                    208, rate 0.40 of the included median (123 with one)
-          saturated                  176, rate 0.86 of the included median (107 with one)
+          smeared                    207, rate 0.40 of the included median (122 with one)
+          saturated                  177, rate 0.86 of the included median (108 with one)
           elongated                  159, rate 0.41 of the included median (127 with one)
-          off_centre                 104, rate 0.31 of the included median (82 with one)
+          off_centre                 103, rate 0.30 of the included median (81 with one)
           coincidence                 61, rate 1.27 of the included median (21 with one)
           step3:not_covered           41
-          jitter                       7
+          jitter                      15
           step3:partial                3
-[summary] flags on included exposures: discrepant 1, high_coi 138, jitter_ok 15, no_aspcorr 752, short 437, sss_edge 150, sss_high 111, sss_mid 215
+[summary] flags on included exposures: discrepant 1, high_coi 138, jitter_ok 15, no_aspcorr 752, psf_broad 2, psf_unchecked 24, short 437, sss_edge 150, sss_high 111, sss_mid 215
 [check] included exposures that differ from the rest of their observation by more than 10 % and 5 sigma: 1
           00089029001 U     uu615761377I rate 338.45 +- 2.34
 ```
@@ -190,12 +208,22 @@ correction.
 - **Only saturated.** For 23 observation/filter pairs (all U) every measured
   exposure is saturated. Step 7 reports those as lower limits.
 - **The jitter period.** 15 of 3C 273's 81 exposures from it are included.
-  The rest are smeared (37), on a patch (10), off centre (8), without a
-  measurable PSF (6), or elongated (5).
+  The others break one rule or more: smeared (54), elongated (17), no PSF
+  check or trusted pointing (15: unaspected, with 3C 273 not found at its
+  position and too few field stars in this sparse field), on a patch (10),
+  off centre (9).
 - **A faint source** (PKS 0537−286): its S/N is below 10 in every exposure,
   so Step 4 measures no shape or concentration, and the shape rules never
-  apply. 312 of its 368 exposures are included; 36 jitter-period exposures
-  are excluded (no measurable PSF) and 15 are on a LOW patch.
+  apply; the field stars do the checking. 344 of its 368 exposures are
+  included. Excluded: 15 on a LOW patch, 5 `step3:partial`, and the 4
+  unaspected exposures of 00035240001 (`step4:not_covered`: the field stars
+  put them 3.4′ off, with PKS 0537−286 outside the field). The 36
+  jitter-period exposures are now included (field stars give both the PSF
+  and the pointing), 35 of them, with the 2022 flare, flagged `psf_broad`
+  (6–40 % lost; see Step 4).
+- **`psf_broad` points** are biased low by their loss. Leave them, correct
+  them in Step 7 (`--psf-correct`), or exclude them here
+  (`--psf-max-loss 0.05`).
 - **`discrepant` flags:** one for 3C 273 (above). Look at such exposures in
   the Step 4 viewer (`swift_uvot_viewer.py --obsid ...`) and exclude them
   with an override if the image is bad.
@@ -215,7 +243,8 @@ included or excluded by its first rule:
 ```
 UVOT_output/
 ├── uvot_master_table.txt   one row per exposure (columns below)
-└── uvot_master_table.pdf   the rules against the data, then rate against time per filter
+└── uvot_master_table.pdf   the rules against the data; the field stars' PSF loss and
+                            pointing offset against time; rate against time per filter
 ```
 
 | Column | What it is |
@@ -224,6 +253,7 @@ UVOT_output/
 | `date_mid`, `mjd_mid`, `exposure`, `frametime`, `mode`, `aspcorr`, `first` | From Step 3 (`first`: opens its snapshot) |
 | `snr`, `offset`, `axis_ratio`, `conc`, `center`, `sss_low`, `sss_mid`, `sss_high` | From Step 4 |
 | `counts_frame`, `saturated`, `rate`, `rate_err`, `rate_lim`, `mag`, `mag_err`, `mag_sys`, `flux_aa`, `flux_aa_err` | From Step 5 |
+| `pnt_offset`, `n_stars`, `psf_loss`, `psf_loss_err` | From Step 4's field stars: pointing offset from Gaia (arcsec), PSF stars, light lost from the 5″ circle and its error |
 | `include` | `yes` or `no` |
 | `rules` | The rules that exclude the exposure, comma-separated (`-` if none) |
 | `flags` | Notes that do not exclude it |
@@ -237,8 +267,11 @@ make_uvot_master_table.py --sss-level MID
 # Exclude full-frame U above 0.90 counts per frame instead of flagging it
 make_uvot_master_table.py --coincidence-limit U=0.90
 
-# The included exposures of one filter (include is column 29)
-awk '$1 == "obsid" || ($2 == "UVW1" && $29 == "yes")' UVOT_output/uvot_master_table.txt | less -S
+# Exclude faint-source exposures whose field stars show more than 5 % loss
+make_uvot_master_table.py --psf-max-loss 0.05
+
+# The included exposures of one filter (include is column 33)
+awk '$1 == "obsid" || ($2 == "UVW1" && $33 == "yes")' UVOT_output/uvot_master_table.txt | less -S
 ```
 
 ## Gotchas
@@ -256,8 +289,11 @@ awk '$1 == "obsid" || ($2 == "UVW1" && $29 == "yes")' UVOT_output/uvot_master_ta
 4. **Two concentration limits.** Step 4 flags below 0.70 ("clearly trailed
    or smeared"); this step excludes below 0.82.
 
-5. **Faint sources and the jitter period.** Without a measurable PSF, all
-   of a faint source's exposures from the jitter period are excluded.
+5. **Faint sources and the jitter period.** A faint source's jitter-period
+   exposures are kept when the field stars measure both the PSF and the
+   pointing, and flagged `psf_broad` when the PSF is broad (most of them).
+   Without field stars (`--no-field-stars`, or none in the exposure) they
+   are excluded.
 
 ## Notes
 
