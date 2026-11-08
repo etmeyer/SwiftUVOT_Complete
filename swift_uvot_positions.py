@@ -82,6 +82,7 @@ from astropy.wcs import WCS, FITSFixedWarning
 from scipy.stats import poisson
 
 import swift_uvot_env as uenv
+import swift_uvot_fieldstars as fs
 from swift_uvot_runner import run_tool, run_many
 from swift_uvot_tables import read_table, write_table
 from swift_uvot_inventory import expmap_path
@@ -146,7 +147,11 @@ COLUMNS = ['obsid', 'filter', 'hdu', 'extname', 'aspcorr', 'mode', 'first',
            'sig_minor', 'major_pa', 'conc', 'conc_err', 'center', 'src_ra',
            'src_dec', 'detx', 'dety', 'sss_low', 'sss_mid', 'sss_high',
            'sss_low_frac', 'bkg_type', 'bkg_area', 'n_excl', 'n_strip',
-           'n_sect', 'bkg5', 'sky', 'src_reg', 'bkg_reg', 'status', 'reason']
+           'n_sect', 'bkg5', 'sky', 'pnt_dra', 'pnt_ddec', 'pnt_n', 'pnt_err',
+           'pnt_src',
+           'n_stars', 'star_conc', 'star_conc_err', 'star_ar', 'star_sigma',
+           'psf_loss', 'psf_loss_err', 'psf_src', 'src_reg', 'bkg_reg',
+           'status', 'reason']
 
 # DET -> RAW detector coordinates: the polynomial in HEASoft's
 # UVOT::Calibration::estimateRAWfromDET (lib/perl/UVOT/Calibration.pm),
@@ -625,10 +630,24 @@ def file_masks(data, expmap, header, wcs, scale, src_ra, src_dec, detections,
     return sky, radii
 
 
+def _key(row):
+    return (row['obsid'], row['filter'], row['extname'])
+
+
+def _true_wcs(wcs, pointing, dec):
+    """The image WCS corrected by a field-star pointing offset larger than
+    fs.RECENTRE_MIN, else the image WCS itself."""
+    if pointing and math.hypot(pointing['d_ra'], pointing['d_dec']) \
+            > fs.RECENTRE_MIN:
+        return fs.corrected_wcs(wcs, pointing, dec)
+    return wcs
+
+
 def process_file(args):
     """Measure every candidate exposure in one sky image."""
     (sky_path, rows, src_ra, src_dec, detections, sss_paths, profiles,
-     overrides, outdir) = args
+     overrides, outdir, pointings) = args
+    pointings = pointings or {}
     results = []
     try:
         sky = _open_fits(sky_path)
@@ -660,7 +679,8 @@ def process_file(args):
         hdu = sky[int(deep['hdu'])]
         sky_sb, radii = file_masks(
             hdu.data, ex_by_name[deep['extname']].data, hdu.header,
-            WCS(hdu.header), abs(hdu.header['CDELT1']) * 3600.0, src_ra,
+            _true_wcs(WCS(hdu.header), pointings.get(_key(deep)), src_dec),
+            abs(hdu.header['CDELT1']) * 3600.0, src_ra,
             src_dec, dets, profiles.get(deep['filter']))
         masks_info = {'sky': sky_sb, 'radii': radii}
     except Exception as exc:
@@ -677,7 +697,21 @@ def process_file(args):
             hdu = sky[int(row['hdu'])]
             h, data = hdu.header, hdu.data
             expmap = ex_by_name[row['extname']].data
-            wcs = WCS(h)
+            # wcs gives true sky coordinates: the image's own, or corrected
+            # by the offset its field stars show (unaspected exposures can
+            # be minutes of arc off); wcs_img is the image's, which the
+            # region files must use
+            wcs_img = WCS(h)
+            pointing = pointings.get(_key(row))
+            wcs = _true_wcs(wcs_img, pointing, src_dec)
+            shifted = wcs is not wcs_img
+            if shifted:
+                reasons.append('pointing corrected by %+.1f", %+.1f" (RA, '
+                               'Dec; from %s)' % (
+                                   pointing['d_ra'], pointing['d_dec'],
+                                   '%d field stars' % pointing['n']
+                                   if pointing['source'] == 'stars' else
+                                   "the snapshot's other filters"))
             scale = abs(h['CDELT1']) * 3600.0
             x0, y0 = [float(v) for v in wcs.world_to_pixel_values(src_ra, src_dec)]
             det_xy = [[float(v) for v in wcs.world_to_pixel_values(d['ra'],
@@ -705,7 +739,8 @@ def process_file(args):
             masks, strips = geometry(catpos)
             bkg0 = background(data, expmap, scale, x0, y0, masks, strips)
             meas = measure_source(data, wcs, scale, x0, y0, bkg0['mean'])
-            center_ra, center_dec, center = src_ra, src_dec, 'catalog'
+            center_ra, center_dec = src_ra, src_dec
+            center = 'stars' if shifted else 'catalog'
             if meas is None:
                 reasons.append('no source signal near the position')
             else:
@@ -728,7 +763,9 @@ def process_file(args):
                     })
                     if offset > MAX_SHIFT:
                         reasons.append('centroid %.1f arcsec away: region at '
-                                       '--ra/--dec' % offset)
+                                       '--ra/--dec%s' % (
+                                           offset, ' (pointing-corrected)'
+                                           if shifted else ''))
                     else:
                         center_ra, center_dec, center = c.ra.deg, c.dec.deg, \
                             'centroid'
@@ -736,14 +773,23 @@ def process_file(args):
             if 'src' in ovr:
                 value, lineno = ovr['src']
                 if value.lower() != 'catalog':
-                    center_ra, center_dec = [float(v) for v in value.split()]
+                    # an override is in the image's own coordinates
+                    ira, idec = [float(v) for v in value.split()]
+                    center_ra, center_dec = [float(v) for v in
+                                             wcs.pixel_to_world_values(
+                                                 *wcs_img.world_to_pixel_values(
+                                                     ira, idec))]
                 else:
                     center_ra, center_dec = src_ra, src_dec
                 center = 'override:%d' % lineno
-            out.update({'center': center, 'src_ra': '%.6f' % center_ra,
-                        'src_dec': '%.6f' % center_dec})
             cx, cy = [float(v) for v in wcs.world_to_pixel_values(center_ra,
                                                                   center_dec)]
+            # the region, in the image's own coordinates (what uvotsource
+            # reads)
+            img_ra, img_dec = [float(v) for v in
+                               wcs_img.pixel_to_world_values(cx, cy)]
+            out.update({'center': center, 'src_ra': '%.6f' % img_ra,
+                        'src_dec': '%.6f' % img_dec})
             centre = SkyCoord(center_ra, center_dec, unit='deg')
             if (cx, cy) != (x0, y0):
                 masks, strips = geometry(centre)
@@ -780,7 +826,7 @@ def process_file(args):
                 reasons.append('concentration not measured (no net counts '
                                'within 15 arcsec)')
 
-            detx, dety, rawx, rawy = detector_position(h, center_ra, center_dec)
+            detx, dety, rawx, rawy = detector_position(h, img_ra, img_dec)
             out.update({'detx': '%.1f' % detx, 'dety': '%.1f' % dety})
             for lvl in SSS_LEVELS:
                 val = sss[lvl]['SSSENS' + row['filter']].data[
@@ -796,7 +842,7 @@ def process_file(args):
             bkg_reg = os.path.join(reg_dir, row['extname'] + '_bkg.reg')
             with open(src_reg, 'w') as fh:
                 fh.write('fk5;circle(%.6f,%.6f,%.1f")\n'
-                         % (center_ra, center_dec, SRC_RADIUS))
+                         % (img_ra, img_dec, SRC_RADIUS))
             btype, area = bkg['type'], bkg['area']
             n_excl, n_strip, n_sect = (len(bkg['masks']), len(bkg['strips']),
                                        len(bkg['sectors']))
@@ -806,7 +852,7 @@ def process_file(args):
                 btype, area = 'override:%d' % lineno, float('nan')
                 n_excl = n_strip = n_sect = 0
             else:
-                lines = background_lines(wcs, scale, center_ra, center_dec,
+                lines = background_lines(wcs_img, scale, img_ra, img_dec,
                                          cx, cy, bkg)
             if lines:
                 with open(bkg_reg, 'w') as fh:
@@ -828,6 +874,17 @@ def process_file(args):
                         'bkg_reg': os.path.relpath(bkg_reg, outdir)
                         if lines else '-'})
             out['status'] = 'ok' if lines else 'no_background'
+            if shifted:
+                # Step 3 judged the coverage with the image's own (wrong)
+                # coordinates: judge it again at the corrected position
+                (emap,), ex_x, ex_y = _cutout((expmap,), cx, cy,
+                                              SRC_RADIUS + 1, scale)
+                inside = np.hypot(ex_x - cx, ex_y - cy) * scale <= SRC_RADIUS
+                if not inside.any() or emap[inside].min() \
+                        < 0.5 * float(np.max(expmap)):
+                    out['status'] = 'not_covered'
+                    reasons.append('with the corrected pointing the source '
+                                   'is not (fully) in the exposed field')
         except Exception as exc:
             out['status'] = 'failed'
             reasons.append('%s: %s' % (exc.__class__.__name__, exc))
@@ -897,6 +954,12 @@ def main(argv=None):
                         default=uenv.default_nproc(),
                         help='parallel workers (default: the CPUs this run may use, '
                              'at most 8)')
+    parser.add_argument('--no-field-stars', action='store_true',
+                        help='skip the Gaia field stars (no pointing '
+                             'correction, no PSF columns)')
+    parser.add_argument('--gaia-offline', action='store_true',
+                        help='use the cached Gaia list only; stop if there '
+                             'is none for this position')
     args = parser.parse_args(argv)
 
     uenv.require_heasoft_shell(['uvotdetect', 'quzcif'])
@@ -944,9 +1007,48 @@ def main(argv=None):
     by_file = defaultdict(list)
     for r in candidates:
         by_file[r['file']].append(r)
+
+    # field stars first: each exposure's pointing (used for the regions)
+    # and PSF
+    pointings, psf, star_rows, fs_note = {}, {}, [], ''
+    if not args.no_field_stars:
+        try:
+            gaia, gaia_path = fs.gaia_stars(args.ra, args.dec, args.outdir,
+                                            offline=args.gaia_offline)
+        except Exception as exc:
+            print('ERROR: Gaia field stars: %s\n(no network? run with '
+                  '--no-field-stars to go on without the pointing and PSF '
+                  'checks)' % exc, file=sys.stderr)
+            return 1
+        stars = fs.select(gaia, args.ra, args.dec)
+        print('[info] Gaia DR3 (%s): %d sources; %d for registration, %d '
+              'isolated PSF stars' % (gaia_path, len(gaia), len(stars[0]),
+                                      len(stars[1])))
+        print('[info] field stars in %d exposures ...' % len(candidates))
+        with ProcessPoolExecutor(max_workers=max(1, args.nproc)) as pool:
+            parts = list(pool.map(fs.measure_file, [
+                (path, rows, stars, args.ra, args.dec)
+                for path, rows in sorted(by_file.items())]))
+        raw, meta, snap = {}, {}, {}
+        for r in candidates:
+            k = _key(r)
+            snap[k] = (r['obsid'], r['snapshot'])
+            meta[k] = {'snapshot': snap[k],
+                       'normal': r['aspcorr'] == 'DIRECT' and not
+                       fs.JITTER[0] <= r['date_mid'][:10] < fs.JITTER[1]}
+        for part in parts:
+            for key, pointing, srows, err in part:
+                raw[key] = pointing
+                star_rows.extend(srows)
+                if err:
+                    fs_note = err
+        pointings = fs.pointing_fallback(raw, snap)
+        psf = fs.normalise(star_rows, meta)
     jobs = [(path, rows, args.ra, args.dec,
              detections.get((rows[0]['obsid'], rows[0]['filter'])),
-             sss_paths, profiles, overrides, args.outdir)
+             sss_paths, profiles, overrides, args.outdir,
+             {_key(r): pointings[_key(r)] for r in rows
+              if _key(r) in pointings})
             for path, rows in sorted(by_file.items())]
     print('[info] measuring %d exposures in %d sky images ...'
           % (len(candidates), len(jobs)))
@@ -965,6 +1067,26 @@ def main(argv=None):
               % (len(candidates), len(rows)), file=sys.stderr)
         return 1
     rows.sort(key=lambda r: order[(r['obsid'], r['filter'], r['extname'])])
+    for r in rows:
+        k = _key(r)
+        p = pointings.get(k)
+        if p:
+            r.update({'pnt_dra': '%+.2f' % p['d_ra'],
+                      'pnt_ddec': '%+.2f' % p['d_dec'], 'pnt_n': p['n'],
+                      'pnt_err': '%.2f' % p['err'], 'pnt_src': p['source']})
+        q = psf.get(k)
+        if q:
+            r.update({'n_stars': q['n_stars'],
+                      'psf_loss': '%.3f' % q['psf_loss'],
+                      'psf_loss_err': '%.3f' % q['psf_loss_err'],
+                      'psf_src': q['psf_source']})
+            if 'star_conc' in q:
+                r.update({'star_conc': '%.3f' % q['star_conc'],
+                          'star_conc_err': '%.3f' % q['star_conc_err'],
+                          'star_ar': '%.2f' % q['star_ar'],
+                          'star_sigma': '%.2f' % q['star_sigma']})
+        elif not args.no_field_stars:
+            r['n_stars'] = 0
 
     # sources near the target, for the record
     src = SkyCoord(args.ra, args.dec, unit='deg')
@@ -1010,6 +1132,17 @@ def main(argv=None):
         'circle), override, or none; bkg_area in arcsec^2; bkg5: that '
         'background in the 5" circle, counts/s; sky: counts/s/arcsec^2 '
         'the mask radii were set against',
+        'pnt_dra, pnt_ddec, pnt_err: pointing offset (image - Gaia, arcsec) '
+        'and its uncertainty, from pnt_n field stars or borrowed from the '
+        'snapshot\'s other filters (pnt_src); applied to the regions '
+        '(center = stars) when over %.0f"; status not_covered if the source '
+        'is then outside the exposed field' % fs.RECENTRE_MIN,
+        'n_stars, star_conc(_err), star_ar, star_sigma: isolated Gaia stars '
+        '(S/N >= %.0f, <= %.1f counts/frame), their concentration relative '
+        'to their median in normal exposures, axis ratio, width (arcsec); '
+        'psf_loss(_err) = 1 - star_conc: light the 5" circle loses to a '
+        'broad PSF (psf_src: stars, or snapshot)' % (fs.PSF_MIN_SNR,
+                                                     fs.PSF_MAX_CPF),
     ]
     pos_path = os.path.join(args.outdir, 'uvot_positions.txt')
     write_table(pos_path, rows, COLUMNS, comments)
@@ -1028,6 +1161,16 @@ def main(argv=None):
                     'where the PSF wing falls below %.1f%% of the sky' % (
                         BRIGHT_CPF, MASK_MAX, HALO_REACH, HALO_RATIO,
                         100 * WING_FRACTION)])
+
+    star_path = None
+    if star_rows:
+        star_path = os.path.join(args.outdir, 'uvot_field_stars.txt')
+        write_table(star_path, star_rows, fs.STAR_COLUMNS, comments[:4] + [
+            'Gaia field stars per exposure (PSF stars): offset from Gaia '
+            '(image - Gaia, arcsec, proper motion applied), S/N, raw counts '
+            'per frame in 5", axis ratio, width (arcsec), concentration '
+            '(5"/15") with its error, and relative to the star\'s median in '
+            'normal exposures'])
 
     # --- report -------------------------------------------------------------
     print()
@@ -1081,13 +1224,44 @@ def main(argv=None):
         print('[summary] on a %-4s low-sensitivity patch: %d (%s)' % (
             lvl, sum(bad.values()), ', '.join('%s %d' % kv for kv in
                                               sorted(bad.items()))))
+    if not args.no_field_stars:
+        moved = Counter(r.get('pnt_src') for r in rows
+                        if r.get('center') == 'stars')
+        print('[summary] pointing measured from field stars: %d of %d (%d '
+              'more from the snapshot); corrected (over %.0f"): %d, of which '
+              '%d regions placed by it (%s) and %d not covered' % (
+                  sum(r.get('pnt_src') == 'stars' for r in rows), len(rows),
+                  sum(r.get('pnt_src') == 'snapshot' for r in rows),
+                  fs.RECENTRE_MIN, sum('pointing corrected' in r['reason']
+                                       for r in rows),
+                  sum(moved.values()), ', '.join(
+                      'from %s %d' % kv for kv in sorted(moved.items())) or
+                  '-', sum(r['status'] == 'not_covered' for r in rows)))
+        big = [r for r in rows if r.get('pnt_dra') not in (None, '-') and
+               math.hypot(float(r['pnt_dra']), float(r['pnt_ddec'])) > 3]
+        for r in big[:8]:
+            print('          %s %s %s: %s", %s" (%s)' % (
+                r['obsid'], r['filter'], r['extname'], r['pnt_dra'],
+                r['pnt_ddec'], r['aspcorr']))
+        if len(big) > 8:
+            print('          ... %d more over 3"' % (len(big) - 8))
+        lossy = [r for r in rows if r.get('psf_loss') not in (None, '-')
+                 and float(r['psf_loss']) > 0.03]
+        print('[summary] PSF from field stars: %d of %d (%d from the '
+              'snapshot\'s other filters); psf_loss > 3 %%: %d' % (
+                  sum(r.get('psf_loss') not in (None, '-') for r in rows),
+                  len(rows), sum(r.get('psf_src') == 'snapshot' for r in rows),
+                  len(lossy)))
+        if fs_note:
+            print('[warn] field stars: %s' % fs_note)
     if det_problems:
         print('[warn] uvotdetect failed for %d observation/filter pair(s): '
               'their backgrounds have no source exclusions' % len(det_problems))
         for key, why in list(det_problems.items())[:5]:
             print('          %s %s: %s' % (key[0], key[1], why))
-    print('[summary] Written: %s, %s, %s/regions/' % (pos_path, det_path,
-                                                     args.outdir))
+    print('[summary] Written: %s, %s, %s%s/regions/' % (
+        pos_path, det_path, star_path + ', ' if star_path else '',
+        args.outdir))
     if counts['failed']:
         print('ERROR: %d exposure(s) failed; see the reason column.'
               % counts['failed'], file=sys.stderr)
