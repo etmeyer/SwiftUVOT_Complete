@@ -333,3 +333,82 @@ Logged during **Step 7** (light curve; branch `step7-lightcurve`).
 - **To do:** dereddening script (SFD-scaled E(B−V) with matching
   coefficients, per the plan); the faint-target test (PKS 0537−286) for
   upper limits; per-exposure light curves (expansion).
+
+Logged during **PR1a** (Step 4 background for faint targets; branch
+`pr1a-step4-background`).
+
+- **Why:** a 2–3 % bias in the background is nothing for 3C 273 but is the
+  whole signal for a faint target. Two causes: neighbours were masked with
+  fixed radii (their wings leaked into the annulus), and the read-out
+  streaks of bright stars crossed the annulus unmasked.
+- **Mask radius from the PSF:** the CALDB REEF curve (to 30″, then an
+  exponential tail fitted on 20–29.5″) gives each neighbour's surface
+  brightness; the mask ends where it falls below **0.5 %** of the sky
+  (sky measured 35–100″ out); 5″ minimum, 40″ cap. 0.5 % was chosen so
+  the summed leak of a typical field's neighbours stays well below the
+  1–2 % accuracy the background needs.
+- **Bright = 0.9 counts/frame** (raw, or `TOT_SATURATED`): 40″ mask plus a
+  ±2″ strip along the read-out direction. 0.5 was tried first and caught a
+  V = 13.2 star whose coincidence correction is fine, pushing 14 of 118
+  backgrounds to the offset circle; 0.9 matches Step 6's `high_coi`.
+- **Read-out direction is DETY,** computed per position through the 'D'
+  WCS: the strongest streaks in the PKS 0537−286 field lie within ~2° of
+  it.
+- **Halo rule:** `uvotdetect` breaks 3C 273's UV halo into dozens of faint
+  "sources" 20–45″ out; sized by flux each got a ~20″ mask and 334
+  backgrounds fell back to the offset circle. A detection within 45″ of a
+  source ≥ 100× brighter (or of a bright one) keeps the old magnitude
+  radius: 53 circles.
+- **Sector rejection** (8 sectors, Poisson upper tail against the rest,
+  p < 10⁻³, ≥ 4 sectors kept) replaces the median. Dropped sectors and
+  strips go into the region file as `-polygon(...)`, which `uvotsource`
+  accepts, so Step 5 sees the same background. 3C 273: 984 exposures
+  drop a sector; background −11 % there, rate +0.02 %.
+- **Concentration:** measured only when its error ≤ 0.02 (correlated
+  background error included); `CONC_MIN` re-derived on 3C 273 with the
+  new background: clean median 0.86–0.87, 1 % below 0.83 → **0.82**.
+  Saturated exposures are exempt from `smeared` (coincidence loss flattens
+  their core to 0.80–0.81 and their rate is a lower limit anyway); without
+  the exemption U lower limits fell 23 → 19.
+- **3C 273 include changes vs main: 27.** 19 no→yes (16 V, 2 U, 1 B),
+  rate / rest of observation median 0.985 (16–84 % 0.95–1.06). 8 yes→no,
+  all `smeared` at 0.78–0.81, several in the jitter period, including
+  00031659120 V, the ~20 % low point noted in Step 7. Script:
+  `_dev_internal/pr1a_validation/include_changes.py`.
+- **PKS 0537−286:** 312 of 368 included (was 193); the 119 shape
+  exclusions driven by noise are gone. Light-curve detections V 14, B 14,
+  U 10 (was 13, 13, 6). 2005 vs UVOTSSC: 00035240002 U 20.79 ± 0.26 (was a
+  limit; catalogue 20.84), B 19.86 (19.73), V 19.14 (19.05); 00035240001 B
+  19.65 (19.55). 2006 U mean 20.93 (was 21.20; Bottacini et al. 21.02).
+- **Blank sky at 30 random positions** (60–180″ from PKS 0537−286, only
+  known sources avoided; 10,854 `uvotsource` calls, script
+  `_dev_internal/2026-10-06_faint_target/experiments/pr1a_blank.py`):
+  - 4 positions hold real faint objects (8–30σ in U, also in V/B), not in
+    Gaia or any single-exposure detection list. Excluded below.
+  - Exposure-weighted means are zero within 1.3σ in every filter: the
+    background is unbiased. Inverse-variance weighting pulls them low
+    (0 to −0.21σ per exposure; errors from the counts, Mighell 1999):
+    the PR2 fix.
+  - Strips, dropped sectors and offset circles show no low bias
+    (per-exposure pulls within 0.1σ of plain annuli).
+  - **ε** (extra error as a fraction of the 5″ background, on the
+    combined point, so that pulls have unit width): V 1.1 %, B 1.6 %,
+    U 2.2 %, UVW1 3.7 %, UVM2 9.0 % (small background), UVW2 3.9 %.
+    With it no point exceeds 3σ in V/B/U and 0–2 do in each UV filter.
+  - V pulls: the excess in 00035240001/2 and 00036783004 is gone (std
+    1.04, 1.08, 1.22; was 1.34, 1.30, 2.26 at the earlier positions);
+    all V 1.03, |pull| > 3 in 0.7 % (was 2.4 %).
+- **Step 4 runs on `os.sched_getaffinity`** (`default_nproc`), so a
+  `taskset` limit is respected; same default for Steps 2 and 5.
+- **E6 known stars re-run** (24 Gaia stars, 8,708 calls, same script with
+  `--stars`): PR1a changes their rates by +0.4–1.4 % at S/N > 10 (the
+  wings no longer inflate the background); per-exposure pulls and the
+  combination biases are unchanged (inverse-variance −0.10 to −0.24σ,
+  exposure-weighted −0.10 to +0.01σ). The wide U/UVW2 bins at high S/N
+  come from one star (G 17.90) that varies by ~20 %.
+- **To do (PR1b): unaspected exposures can miss the source.** In
+  00035240001 the four `no_aspcorr` exposures (V, UVW1, UVM2, UVW2;
+  12–48 s) read ~0 for every field star — the pointing is off by more
+  than the 5″ aperture — and Step 6 includes them with the flag only.
+  PKS 0537−286 reads ~0 there too. A bright target re-centres itself; a
+  faint one cannot. The field-star check would catch these.

@@ -10,13 +10,13 @@ looking at, with their regions drawn on.
 
 Run both in the HEASoft terminal (`setup_swiftuvot; heainit`), from the
 analysis folder that holds `UVOT_input` and `UVOT_output`. For all of
-3C 273 (2,891 candidate exposures) the positions take about 4½ minutes with
-`--nproc 16`, and the viewer about 20 seconds.
+3C 273 (2,891 candidate exposures) the positions take about 11 minutes on
+4 cores, and the viewer about 20 seconds.
 
 ## What runs
 
 ```bash
-swift_uvot_positions.py --ra 187.2779 --dec 2.0524 --nproc 16
+swift_uvot_positions.py --ra 187.2779 --dec 2.0524
 swift_uvot_viewer.py                    # -> UVOT_output/uvot_positions.pdf
 ```
 
@@ -24,7 +24,7 @@ swift_uvot_viewer.py                    # -> UVOT_output/uvot_positions.pdf
 | ---- | ------- |
 | `--ra` / `--dec` | Your source position; must match the one Step 3 used |
 | `--outdir` | Step 3's output folder (default `UVOT_output`) |
-| `--nproc` | Parallel workers (default 8) |
+| `--nproc` | Parallel workers (default: the CPUs the run may use, at most 8; pin a shell with `taskset -c 17-20 bash` and runs follow) |
 
 `swift_uvot_viewer.py` takes `--outdir`, `--pdf`, `--per-category` (cutouts
 per category, default 48) and `--obsid` (every exposure of the given
@@ -34,22 +34,29 @@ observations instead of the categories).
 
 **Position and shape.** In each exposure the script finds the brightest pixel
 within 8″ of `--ra`/`--dec`, centroids the source around it (4″), and
-measures its shape from the second moments within 6″: the axis ratio, the
-sizes along the major and minor axes, and the major axis' position angle.
-For 3C 273 the median axis ratio is 1.07 (95 % of ordinary exposures are
-below 1.2), and 1.9 for the trailed event-mode snapshot openers of Step 3.
+measures its S/N in the 5″ circle. At S/N ≥ 10 it also measures the shape
+from the second moments within 6″: the axis ratio, the sizes along the major
+and minor axes, and the major axis' position angle, and the offset of the
+centroid from `--ra`/`--dec`. Below S/N 10 these columns are `-`: the
+moments of a noise-dominated image are noise (36 exposures of the faint
+blazar PKS 0537−286 read axis ratios above 1.5 from noise alone). For
+3C 273 the median axis ratio is 1.07 (95 % of ordinary exposures are below
+1.2), and 1.9 for the trailed event-mode snapshot openers of Step 3.
 
 **Concentration.** The axis ratio sees only the central 6″. A trail longer
 than that, or a smeared image with several lobes, can look round there and
 still lose much of its light outside the 5″ source region. So the script also
 divides the net counts in the 5″ region by the net counts in a 15″ circle
-around it (column `conc`). For a point source this is about 0.85: the
-median for 3C 273's ordinary exposures is 0.84–0.87 depending on the filter.
-Strong coincidence loss flattens the core and lowers it a little: for U
-exposures above 0.9 counts per frame the median is 0.83, and 5 % are below
-0.77. Below 0.70 the reason column says
-`trailed or smeared`. `conc` is left empty when even the 15″ circle holds no
-clear source (S/N below 10 there).
+around it (column `conc`), with its error (`conc_err`: the counts, plus 1 %
+of the background as a systematic). For a point source this is 0.86–0.88
+(median of 3C 273's clean exposures per filter; 5 % are below 0.84).
+Strong coincidence loss flattens the core and lowers it a little. Below
+0.70 the reason column says `trailed or smeared`. `conc` is reported only
+when `conc_err` is at most 0.02, otherwise it is `-` and the reason says
+why: a faint source's concentration is too noisy to judge (at S/N 10 the
+error is 0.08–0.2, and a true point source would read `smeared` 10–18 % of
+the time). For 3C 273, 2,790 of 2,891 exposures are measured; for
+PKS 0537−286 none.
 
 **The source region** is a 5″ circle — the calibrated UVOT aperture — at the
 centroid when the source is clearly detected (S/N ≥ 10) within 3″ of
@@ -71,16 +78,52 @@ at that level. On 1,457 3C 273 exposures the detector positions agree with
 case. Which level to exclude at is decided in Step 6, from the data.
 
 **The background region** is the 27.5–35″ annulus used in the UVOT
-calibration (Poole et al. 2008). Every other source that `uvotdetect`
-finds (2.5σ) in the deepest exposure of that observation and filter is
-masked out with a circle sized by its magnitude, as in HEASoft's `uvotlc`:
-20″ for magnitude ≤ 12, 15″ (≤ 14), 10″ (≤ 16), 7″ (≤ 18), otherwise 5″.
+calibration (Poole et al. 2008), with three kinds of cut-out:
+
+- *Neighbours.* Every other source that `uvotdetect` finds (2.5σ) in the
+  deepest exposure of that observation and filter is masked with a circle
+  that reaches out to where its PSF wing falls below 0.5 % of the sky. The
+  wing is the CALDB's PSF profile (the encircled-energy file used for
+  aperture corrections, with an exponential tail beyond its 30″ end); the
+  source's brightness is `uvotdetect`'s coincidence-corrected rate; the sky
+  is measured 35–100″ around your source. Radii run from 5″ to 40″ (3C 273:
+  median 23″). The old magnitude bins of HEASoft's `uvotlc` (5–20″) were
+  far too small for faint targets: the wings of a V = 13.2 star 38″ from
+  PKS 0537−286 raised its whole annulus by 2–4 %, enough to make the target
+  read 8 % (V) to 40 % (U) too faint.
+- *Bright sources.* A source at 0.9 counts per frame or more is saturated or
+  nearly so, and its measured rate understates its wings: it gets the 40″
+  maximum and a strip 2″ either side of its read-out direction (detector
+  Y), along which it leaves a streak across the image. That includes your
+  own source when it is that bright (3C 273: 1,081 annuli lose a strip).
+  Faint detections within 45″ of a source 100 times brighter are almost
+  always fragments of its halo, which `uvotdetect` breaks into many
+  "sources" (3C 273 has over a thousand such detections): they keep the
+  `uvotlc` radius, or they would eat the annulus.
+- *Bright sectors.* The annulus is cut into 8 sectors of 45°. A sector whose
+  counts are too high for the others (Poisson, p < 0.001) is dropped whole,
+  and the test repeats, leaving at least 4. Single pixels are never
+  clipped: at a few counts per pixel that biases the background low.
+
+The background is then the plain mean of the pixels left — the estimator
+`uvotsource` uses. Step 4 computes it itself for its own S/N and
+concentration (the median it used before misses 8–15 % of the background in
+V, B and U at a few counts per pixel, and nearly all of it in the UV, which
+made faint sources look smeared). The column `bkg5` gives it per 5″ circle
+(counts/s); it agrees with Step 5's `uvotsource` value to 0.1 % (median;
+5–95 % within 1.7 %) for 3C 273. All cut-outs go into the region file
+(`-circle` and `-polygon`), so Step 5 measures exactly the same pixels.
+
 Your source itself is never masked (the brightest detection within 10″ of
 `--ra`/`--dec`). `uvotsource` refuses a background that is not evenly
 exposed, so the annulus must be fully exposed (within 1 %) and keep at least
 half its area. Otherwise the script tries a 15″ circle 45″, 60″ or 90″ away,
-wherever it is fully exposed and clear of sources. If none qualifies, the
-status is `no_background` (you can set one by hand, below).
+wherever it is fully exposed and clear of masks and strips. If none
+qualifies, the status is `no_background` (you can set one by hand, below).
+
+**Low-sensitivity patches at the edge.** Besides the centre, the script
+samples the whole 5″ circle every 0.5″ and records what fraction lies on a
+LOW patch (`sss_low_frac`); Step 6 flags `sss_edge` above 10 %.
 
 **Statuses.** Every candidate exposure gets one: `ok`, `no_background`, or
 `failed` (with the reason). Nothing is excluded here; the flags and numbers
@@ -92,20 +135,29 @@ For all of 3C 273:
 ```
 [summary] 2891 candidate exposures: ok 2891
 [summary] source region at: catalog 111, centroid 2780
-[summary] background: annulus 2879, circle 12
+[summary] background: annulus 2838, circle 53
           offsets, ASPCORR=DIRECT: median 0.25", 90% 0.45", 1 over 3"
-          offsets, ASPCORR=NONE  : median 0.77", 90% 2.84", 110 over 3"
-[summary] axis ratio > 1.3 (trailed or doubled?): 223, of which 146 event-mode snapshot openers
-[summary] light outside the 5" region (5"/15" counts < 0.70; trailed or smeared): 135, of which 109 event-mode snapshot openers
+          offsets, ASPCORR=NONE  : median 0.77", 90% 2.59", 103 over 3"
+[summary] axis ratio > 1.3 (trailed or doubled?): 222, of which 146 event-mode snapshot openers
+[summary] light outside the 5" region (5"/15" counts < 0.70; trailed or smeared): 128, of which 106 event-mode snapshot openers
+[summary] background: 1081 with read-out strips, 984 with bright sectors dropped (1391 sectors)
+[summary] concentration measured (error <= 0.02): 2790 of 2891
+[summary] more than 10% of the 5" circle on a LOW patch: 557
 [summary] S/N < 10 at the source: 7 (faint, or its light is elsewhere: see the viewer)
 [summary] on a LOW  low-sensitivity patch: 385 (B 4, U 54, UVM2 105, UVW1 99, UVW2 98, V 25)
 [summary] on a MID  low-sensitivity patch: 652 (B 22, U 154, UVM2 152, UVW1 156, UVW2 125, V 43)
 [summary] on a HIGH low-sensitivity patch: 786 (B 28, U 200, UVM2 165, UVW1 184, UVW2 144, V 65)
 ```
 
-1,059 of the 2,879 annuli have at least one source masked out (up to 10).
-All 12 offset circles are in pointings of SDSS J122933+015810, 8′ from
-3C 273, where 3C 273 is 7–12′ off-axis and the annulus is not evenly exposed.
+The 53 offset circles are mostly UVM2 and UVW2 (42), in pointings of other
+targets where 3C 273 is far off-axis (00089771, 00091742, 00050900) and the
+annulus is not evenly exposed or its neighbours' masks take more than half
+of it. Dropped sectors are common for 3C 273 itself (984 exposures, mostly
+U and the UV) because its own halo is lopsided across its annulus; there
+they lower the background by 11 % (median) and its rate by 0.02 %. For the
+faint PKS 0537−286, 5 of 363 exposures drop a sector, 23 use an offset
+circle, and 125 lose a read-out strip from one of the G ≈ 10 stars 3–5′
+away.
 
 ### The viewer
 
@@ -118,7 +170,7 @@ faintest at the source position, the most elongated, the largest offsets,
 non-standard backgrounds, exposures on a LOW patch, and a random sample of
 typical exposures for comparison. Each 90″ cutout shows the source region
 (green), `--ra`/`--dec` (red cross) and the background region (cyan; masked
-sources dashed), with S/N, axis ratio (`ar`), concentration (`c`) and offset
+sources, read-out strips and dropped sectors dashed), with S/N, axis ratio (`ar`), concentration (`c`) and offset
 in the title.
 
 ## What to look for
@@ -145,13 +197,16 @@ in the title.
   (Step 3). For a faint source the same S/N could just mean a
   non-detection; telling the two apart needs field stars (planned for faint
   targets).
-- **Offsets over 3″** (111): 99 event-mode openers, 9 jitter-period
-  exposures and 3 just over the limit (3.2–3.35″).
+- **Offsets over 3″** (104): mostly event-mode openers and jitter-period
+  exposures.
 - **Low-sensitivity patches.** For 3C 273 the LOW maps flag 13 % of the
   exposures, MID 23 % and HIGH 27 %, most in U and the UV filters. The
   summary page shows the fraction per filter.
 - **Non-standard backgrounds** (`bkg_type` not `annulus`): check them in the
   viewer.
+- **A faint source** has `-` in the shape columns and `conc`, with the reason.
+  That is expected: Step 6 can't judge its PSF from the source itself, and
+  says so.
 
 ## Inputs and outputs
 
@@ -163,26 +218,31 @@ the UVOT CALDB; optionally `UVOT_output/uvot_region_overrides.txt`.
 ```
 UVOT_output/
 ├── uvot_positions.txt       one row per candidate exposure (columns below)
-├── uvot_detections.txt      uvotdetect sources within 150" of your source
+├── uvot_detections.txt      uvotdetect sources within 150" of your source, with
+│                            rate, counts per frame and mask radius
 ├── uvot_positions.pdf       the viewer's contact sheets
 ├── detections/              uvotdetect output and logs, per observation and filter
 └── regions/<OBSID>/
     ├── <EXTNAME>_src.reg    fk5;circle(ra,dec,5.0")
-    └── <EXTNAME>_bkg.reg    fk5;annulus(ra,dec,27.5",35.0") and fk5;-circle(...) exclusions,
+    └── <EXTNAME>_bkg.reg    fk5;annulus(ra,dec,27.5",35.0") and fk5;-circle(...) masks,
+                             fk5;-polygon(...) read-out strips and dropped sectors,
                              or fk5;circle(ra,dec,15.0")
 ```
 
 | Column | What it is |
 | ------ | ---------- |
 | `snr` | Source S/N in the 5″ circle |
-| `offset`, `d_ra`, `d_dec` | Centroid minus `--ra`/`--dec` (arcsec; `d_ra` along the sky) |
-| `axis_ratio`, `sig_major`, `sig_minor`, `major_pa` | Shape: ratio of the axes, their sizes (arcsec), the major axis' position angle (deg east of north) |
-| `conc` | Net counts in the 5″ source region / in a 15″ circle (point source ~0.85) |
+| `offset`, `d_ra`, `d_dec` | Centroid minus `--ra`/`--dec` (arcsec; `d_ra` along the sky); only at S/N ≥ 10 |
+| `axis_ratio`, `sig_major`, `sig_minor`, `major_pa` | Shape: ratio of the axes, their sizes (arcsec), the major axis' position angle (deg east of north); only at S/N ≥ 10 |
+| `conc`, `conc_err` | Net counts in the 5″ source region / in a 15″ circle (point source 0.86–0.88), and its error; only where the error is ≤ 0.02 |
 | `center` | Where the source region is: `centroid`, `catalog`, or `override:<line>` |
 | `src_ra`, `src_dec` | The source region's centre |
 | `detx`, `dety` | The source's detector position |
 | `sss_low`, `sss_mid`, `sss_high` | CALDB small-scale-sensitivity value there (`-99.9`: on a patch) |
-| `bkg_type`, `bkg_area`, `n_excl` | `annulus`, `circle`, `override:<line>` or `none`; area (arcsec²); masked sources |
+| `sss_low_frac` | Fraction of the 5″ circle on a LOW patch |
+| `bkg_type`, `bkg_area`, `n_excl`, `n_strip`, `n_sect` | `annulus`, `circle`, `override:<line>` or `none`; area (arcsec²); masked sources, read-out strips and dropped sectors in it |
+| `bkg5` | Step 4's background in the 5″ circle (counts/s); compare with Step 5's |
+| `sky` | The sky (counts/s/arcsec²) the mask radii were set against |
 | `src_reg`, `bkg_reg` | The region files |
 | `status`, `reason` | `ok`, `no_background` or `failed`; why the region is not at the centroid, and flags such as `trailed or smeared` |
 
@@ -230,8 +290,10 @@ grep "trailed or smeared" UVOT_output/uvot_positions.txt | less -S
 4. **A neighbour within 15″ lowers `conc`.** Its counts land in the 15″
    circle. Look at the cutout before you blame trailing.
 
-5. **The readout streak of a bright source is not masked** in the background
-   annulus, which it crosses in every exposure. A to-do.
+5. **The read-out direction is detector Y.** In the PKS 0537−286 field the
+   clearest streaks (G ≈ 10 stars in long U exposures) lie within 2° of it;
+   a few weaker UV cases were ambiguous. If a streak in the viewer runs
+   outside its dashed strip, tell us.
 
 6. **Re-running replaces the region files** for every candidate; keep your
    own choices in the overrides file.

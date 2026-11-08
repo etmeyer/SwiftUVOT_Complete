@@ -35,7 +35,7 @@ come from the 3C 273 data, as described below.
 | `coincidence` | above 0.95 counts per frame (U: not used, see `high_coi`) | the coincidence-loss correction goes wrong below the cap: UVW2 above 0.95 reads 13–39 % high |
 | `sss` | on a low-sensitivity patch at `--sss-level` (LOW) | rates 5 % low on average, 29 % of them more than 10 % low |
 | `off_centre` | source found more than 3″ from the region centre, so Step 4 left the region at `--ra`/`--dec` | the region misses the source: rates 0.30 of the truth |
-| `smeared` | concentration (5″/15″ counts, Step 4) below 0.78 | light outside the 5″ region: 3 % low at 0.75–0.78, far more below |
+| `smeared` | concentration (5″/15″ counts, Step 4) below 0.82; not applied to saturated exposures, whose flattened cores read 0.80–0.81 and whose rates are lower limits anyway | light outside the 5″ region: clean exposures are at 0.84 and above (95 %); the two below 0.82 read 5 % and 16 % low |
 | `elongated` | axis ratio above 1.5 | trailed: 5–12 % low |
 | `jitter` | taken during the spacecraft jitter (7 August 2023 – 4 April 2024) with no measurable PSF | the image cannot be checked |
 | `duplicate` | same `EXPID` as an included exposure (image- and event-mode copy) | counted once |
@@ -49,6 +49,8 @@ other.
 **Flags** mark included exposures without excluding them:
 
 - `sss_mid` and `sss_high`: on a patch only at a level the rule doesn't exclude.
+- `sss_edge`: the centre is clear, but more than 10 % of the 5″ circle lies
+  on a LOW patch (Step 4's `sss_low_frac`).
 - `jitter_ok`: taken during the jitter, but the PSF check passed.
 - `high_coi`: U above 0.90 counts per frame. Kept, because for a bright
   source full-frame U is often the only U there is, but probably about 8 %
@@ -109,17 +111,25 @@ An absolute check needs another method, such as readout-streak photometry
 reads 13–39 % higher than the rest of its observation (right-hand panel of
 the figure below).
 
-**Shape.** The rate against concentration (axis ratio ≤ 1.25, region at the
-centroid) and against axis ratio (concentration ≥ 0.78):
+**Shape.** The rate against concentration (axis ratio ≤ 1.5, region at the
+centroid; references: concentration ≥ 0.84 and axis ratio ≤ 1.25) and
+against axis ratio (concentration ≥ 0.78, measured with Step 4's earlier
+median background):
 
-| Concentration | Rate / clean median | | Axis ratio | Rate / clean median |
-| ------------- | ------------------- | - | ---------- | ------------------- |
-| 0.82 and above | 1.00 | | up to 1.5 | 0.99–1.00 |
-| 0.78–0.82 | 0.99 | | 1.5–1.7 | 0.95 |
-| 0.75–0.78 | 0.97 | | above 1.7 | 0.88 |
+| Concentration | Exposures | Rate / clean median | | Axis ratio | Rate / clean median |
+| ------------- | --------- | ------------------- | - | ---------- | ------------------- |
+| 0.88 and above | 262 | 1.00 | | up to 1.5 | 0.99–1.00 |
+| 0.84–0.88 | 813 | 1.00 | | 1.5–1.7 | 0.95 |
+| 0.82–0.84 | 30 | 0.99 | | above 1.7 | 0.88 |
+| 0.78–0.82 | 2 | 0.84, 0.95 | | | |
 
-The bias at 0.75–0.82 also appears at low counts per frame, so it is a
-broader PSF, not coincidence loss.
+Step 4 measures the concentration over the plain mean of the masked
+annulus. Its earlier estimate, the annulus median, sat below the mean at a
+few counts per pixel and spread short exposures' concentrations down to
+0.75: the limit was 0.78 then, where those read 3 % low. With the mean,
+clean exposures are tightly grouped (median 0.86–0.87 per filter, 1 % below
+0.83), and the 88 exposures that read 0.76–0.82 before now read 0.82 or
+more. The limit is 0.82.
 
 **Low-sensitivity patches:** LOW 0.95, MID-only 0.99, HIGH-only 1.00 (Step
 5). The default excludes LOW only; `--sss-level MID` also excludes the
@@ -139,39 +149,38 @@ exposures. Dotted lines mark the limits.*
 For all of 3C 273:
 
 ```
-[summary] 2935 exposures: 2091 included, 844 excluded
+[summary] 2935 exposures: 2102 included, 833 excluded
           filter  exposures  included  included exposure (s)
-          V             487       440                  36365
-          B             197       141                  11555
-          U             505       274                  48337
-          UVW1          528       419                  83164
-          UVM2          571       442                 102181
-          UVW2          647       375                 154788
+          V             487       455                  36445
+          B             197       141                  11472
+          U             505       276                  48374
+          UVW1          528       417                  82048
+          UVM2          571       440                 101959
+          UVW2          647       373                 153932
 [summary] exposures per rule (one exposure can break several):
           sss                        385, rate 0.94 of the included median (125 with one)
-          smeared                    201, rate 0.45 of the included median (136 with one)
+          smeared                    208, rate 0.40 of the included median (123 with one)
           saturated                  176, rate 0.86 of the included median (107 with one)
-          elongated                  159, rate 0.42 of the included median (128 with one)
-          off_centre                 104, rate 0.30 of the included median (83 with one)
-          coincidence                 61, rate 1.16 of the included median (17 with one)
+          elongated                  159, rate 0.41 of the included median (127 with one)
+          off_centre                 104, rate 0.31 of the included median (82 with one)
+          coincidence                 61, rate 1.27 of the included median (21 with one)
           step3:not_covered           41
-          jitter                       6
+          jitter                       7
           step3:partial                3
-[summary] flags on included exposures: discrepant 1, high_coi 136, jitter_ok 20, no_aspcorr 744, short 420, sss_high 106, sss_mid 218
+[summary] flags on included exposures: discrepant 1, high_coi 138, jitter_ok 15, no_aspcorr 752, short 437, sss_edge 150, sss_high 111, sss_mid 215
 [check] included exposures that differ from the rest of their observation by more than 10 % and 5 sigma: 1
-          00089029001 U     uu615761377I rate 338.332 +- 2.34
+          00089029001 U     uu615761377I rate 338.45 +- 2.34
 ```
 
 "Rate ... of the included median" compares each excluded exposure with the
 included exposures of its observation and filter, where there are any. The
-included exposures add up to 72 % of the measured exposure time. The one
-`discrepant` U exposure (00089029001, 0.952 counts per frame) reads 14 %
+one `discrepant` U exposure (00089029001, 0.952 counts per frame) reads 14 %
 below the rest of its observation: the steep end of the coincidence
 correction.
 
 ## What to look for
 
-- **U.** 274 of 505 U exposures are included; 136 of them are flagged
+- **U.** 276 of 505 U exposures are included; 138 of them are flagged
   `high_coi` (full-frame, 0.90–0.98 counts per frame, probably about 8 %
   low). They are all the U there is from 2017 to 2022. Step 7 keeps the
   flag on the combined points. To leave them out instead, use
@@ -180,9 +189,13 @@ correction.
   openers of 2009–2016 (`off_centre`, `elongated`, `smeared`).
 - **Only saturated.** For 23 observation/filter pairs (all U) every measured
   exposure is saturated. Step 7 reports those as lower limits.
-- **The jitter period.** 20 of 3C 273's 81 exposures from it are included.
-  The rest are smeared (31), on a patch (10), off centre (8), elongated (6),
-  or without a measurable PSF (6).
+- **The jitter period.** 15 of 3C 273's 81 exposures from it are included.
+  The rest are smeared (37), on a patch (10), off centre (8), without a
+  measurable PSF (6), or elongated (5).
+- **A faint source** (PKS 0537−286): its S/N is below 10 in every exposure,
+  so Step 4 measures no shape or concentration, and the shape rules never
+  apply. 312 of its 368 exposures are included; 36 jitter-period exposures
+  are excluded (no measurable PSF) and 15 are on a LOW patch.
 - **`discrepant` flags:** one for 3C 273 (above). Look at such exposures in
   the Step 4 viewer (`swift_uvot_viewer.py --obsid ...`) and exclude them
   with an override if the image is bad.
@@ -241,7 +254,7 @@ awk '$1 == "obsid" || ($2 == "UVW1" && $29 == "yes")' UVOT_output/uvot_master_ta
    that target's own data.
 
 4. **Two concentration limits.** Step 4 flags below 0.70 ("clearly trailed
-   or smeared"); this step excludes below 0.78, where the bias reaches 3 %.
+   or smeared"); this step excludes below 0.82.
 
 5. **Faint sources and the jitter period.** Without a measurable PSF, all
    of a faint source's exposures from the jitter period are excluded.

@@ -59,9 +59,9 @@ swift_uvot_doctor.py          # Step 1: check the terminal
 swift_uvot_download.py --name "3C 273" --list-only                # Step 2: list ...
 swift_uvot_download.py --name "3C 273" --outdir UVOT_input --nproc 4   # ... and download
 swift_uvot_inventory.py --ra 187.2779 --dec 2.0524                      # Step 3: every exposure
-swift_uvot_positions.py --ra 187.2779 --dec 2.0524 --nproc 16           # Step 4: positions, regions
+swift_uvot_positions.py --ra 187.2779 --dec 2.0524                     # Step 4: positions, regions
 swift_uvot_viewer.py                                                    # ... and contact sheets
-swift_uvot_photometry.py --nproc 16                                     # Step 5: photometry
+swift_uvot_photometry.py                                                # Step 5: photometry
 make_uvot_master_table.py                                               # Step 6: quality rules
 swift_uvot_lightcurve.py                                                # Step 7: light curve
 ```
@@ -115,25 +115,30 @@ UVOT exposure log has a sky image. Exits 1 if any file is unreadable.
 
 ```
 swift_uvot_inventory.py --ra RA --dec DEC [--indir UVOT_input] [--outdir UVOT_output]
-                        [--nproc 8] [--no-catalog]
+                        [--nproc N] [--no-catalog]
 ```
 
 ### `swift_uvot_positions.py`
 
-For every candidate exposure: the source's centroid and offset from your
-position, its shape (axis ratio, sizes, position angle), the share of its
-15″ counts inside the 5″ region (trailed and smeared images), its detector
+For every candidate exposure: the source's centroid and S/N; at S/N ≥ 10
+its offset from your position and shape (axis ratio, sizes, position
+angle); the share of its 15″ counts inside the 5″ region (trailed and
+smeared images; only where that share is known to ±0.02); its detector
 position and the CALDB low-sensitivity flags at the LOW, MID and HIGH levels
-(the same lookup as `uvotsource`). Writes fk5 source and background region
-files: the 5″ circle (at the centroid when the source is clear and within
-3″), and the 27.5–35″ annulus minus the sources `uvotdetect` finds, or an
-offset circle when the annulus is not evenly exposed. Positions and
+(the same lookup as `uvotsource`), and how much of the 5″ circle lies on a
+LOW patch. Writes fk5 source and background region files: the 5″ circle (at
+the centroid when the source is clear and within 3″), and the 27.5–35″
+annulus minus the sources `uvotdetect` finds (each masked out to where its
+PSF wing falls below 0.5 % of the sky; saturated ones also lose a read-out
+strip) and minus any 45° sector that is too bright, or an offset circle
+when too little of the annulus is left or it is not evenly exposed. Its own
+background is the plain mean of what is left, as in `uvotsource`. Positions and
 backgrounds set in `UVOT_output/uvot_region_overrides.txt` win. Output:
 `UVOT_output/uvot_positions.txt`, `uvot_detections.txt`, `regions/`. Exits 1
 if any exposure failed.
 
 ```
-swift_uvot_positions.py --ra RA --dec DEC [--outdir UVOT_output] [--nproc 8]
+swift_uvot_positions.py --ra RA --dec DEC [--outdir UVOT_output] [--nproc N]
 ```
 
 ### `swift_uvot_viewer.py`
@@ -162,7 +167,7 @@ rate against time, per filter) and `photometry/<OBSID>/` (each call's FITS
 table and log). Exits 1 if any call failed.
 
 ```
-swift_uvot_photometry.py [--outdir UVOT_output] [--nproc 8] [--plot-only]
+swift_uvot_photometry.py [--outdir UVOT_output] [--nproc N] [--plot-only]
 ```
 
 ### `make_uvot_master_table.py`
@@ -171,7 +176,7 @@ Joins Steps 3–5 into one row per exposure and decides by rule which ones the
 light curve uses (`include` yes/no, with the rules that excluded each):
 saturated, above 0.95 counts per frame (U: kept up to saturation but flagged above 0.90),
 on a LOW low-sensitivity patch, source off the region centre, smeared
-(concentration < 0.78), elongated (axis ratio > 1.5), no measurable PSF
+(concentration < 0.82), elongated (axis ratio > 1.5), no measurable PSF
 during the 2023–24 spacecraft jitter, duplicate exposure. The limits were
 calibrated on 3C 273. The table is regenerated, never edited; decisions go
 in `UVOT_output/uvot_overrides.txt`. Lists the exposures whose `include`

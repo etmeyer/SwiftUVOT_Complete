@@ -344,8 +344,10 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     parser.add_argument('--outdir', default='UVOT_output',
                         help='Steps 3-4 output folder (default: UVOT_output)')
-    parser.add_argument('--nproc', type=int, default=8,
-                        help='parallel uvotsource calls (default: 8)')
+    parser.add_argument('--nproc', type=int,
+                        default=uenv.default_nproc(),
+                        help='parallel uvotsource calls (default: the CPUs this run may use, '
+                             'at most 8)')
     parser.add_argument('--plot-only', action='store_true',
                         help='only remake uvot_photometry.pdf from the tables')
     args = parser.parse_args(argv)

@@ -411,8 +411,10 @@ def main(argv=None):
     parser.add_argument('--outdir', default='UVOT_output',
                         help='where to write the inventory (default: '
                              'UVOT_output)')
-    parser.add_argument('--nproc', type=int, default=8,
-                        help='files read at once (default: 8)')
+    parser.add_argument('--nproc', type=int,
+                        default=uenv.default_nproc(),
+                        help='files read at once (default: the CPUs this run may use, '
+                             'at most 8)')
     parser.add_argument('--no-catalog', action='store_true',
                         help="don't compare with HEASARC's master catalog "
                              "and exposure log (no network needed)")

@@ -66,12 +66,12 @@ For all of 3C 273:
 
 ```
 [summary] filter  detected  upper_limit  lower_limit  excluded  not_covered  high_coi  scatter
-          V            250            0            0        15            0         0        0
+          V            249            0            0        16            0         0        0
           B            125            0            0        25            0         0        0
           U            215            0           23        28            1        97        1
-          UVW1         228            0            0        50            0         0        0
-          UVM2         229            0            0        50            1         0        1
-          UVW2         253            0            0        52            7         0        1
+          UVW1         226            0            0        52            0         0        0
+          UVM2         227            0            0        52            1         0        1
+          UVW2         252            0            0        53            7         0        1
 ```
 
 ![The UVOT light curve of 3C 273](img/07-lightcurve-3c273.png)
@@ -86,10 +86,11 @@ are saturated lower limits.*
   8 % low. Compare them with UVW1 and B before using U colours.
 - **Lower limits** (23, all U, 2007–2016): every exposure was saturated.
   They sit below the measured U points, as they should.
-- **`jitter_ok` points** (18, Nov 2023 – Jan 2024): their PSF passed the
-  shape checks, but look at them. The V point of 00031659120 (2023-11-15,
-  12.7 mJy) is about 20 % below its neighbours.
-- **`excluded`** (220): for most of them (135) every exposure was on a LOW
+- **`jitter_ok` points** (13, Nov 2023 – Jan 2024): their PSF passed the
+  shape checks, but look at them. (The V point of 00031659120, 2023-11-15,
+  about 20 % below its neighbours, passed with the concentration limit of
+  0.78 and is now excluded as `smeared` at 0.82.)
+- **`excluded`** (226): for most of them (128) every exposure was on a LOW
   low-sensitivity patch. Excluding at LOW was the Step 6 default; Step 6's
   docs show the bias.
 - **`scatter`** (3): the exposures of one observation disagree. The U point
