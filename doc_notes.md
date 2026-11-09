@@ -511,3 +511,31 @@ Logged during **PR1b** (Gaia field stars: pointing and PSF; branch
   snapshot; sparse field); aspected offsets 0.24″ median. 2 bright-source
   V exposures without a measured concentration are flagged `psf_broad`
   (11 %); 24 `psf_unchecked`.
+
+Logged during **Step 8** (flux densities, dereddened; branch `flux-step8`).
+
+- **Why:** Step 7's flux densities use `uvotsource`'s fixed factors (a
+  GRB-like spectrum) and are not dereddened; for a source with another
+  spectrum, Galactic dust, or intergalactic absorption (PKS 0537−286 at
+  z = 3.1) they are off. The user called this important (faint-target
+  plan F10.3). User decisions: keep `uvotsource`'s factors by default and
+  only deredden; S&F11; Inoue 2014; a separate Step 8; `--fit-alpha` later.
+- **Folding the CALDB effective areas** (newest `SPECRESP` per filter from
+  caldb.indx, no HEASoft) reproduces `uvotsource`'s factors within
+  0.1–1.1 % (V, B, U, UVM2, UVW2) and 2.8 % (UVW1) for α = 0–1; the
+  factor's spectral dependence is real (UVW2 8 % at α = 3).
+- **Dust laws** coded in the script (no new dependency); identical to the
+  `extinction` package. Folded A/E(B−V) differs from the value at one
+  wavelength by up to 0.8 (UVM2, UVW2).
+- **IGM:** Inoue 2014 coefficients (Table 2) taken from the eazy-py data
+  files; formulae from the paper (eazy's code read, not run). Lyman-α
+  forest τ_eff matches Becker et al. 2013 (z = 3: 0.400 vs 0.402).
+  PKS 0537−286: UV transmission 0.09–0.13 (Inoue) vs 0.02–0.05 (Madau):
+  model-dependent, flagged. U is still 2.5–2.7× below V after the mean
+  correction (U mostly beyond the Lyman limit at z = 3.1).
+- **E(B−V) error:** IRSA's region is at least 2° (its scatter is not a
+  local error), so the error is 16 % (SFD's own).
+- **3C 273:** U sits a median 19 % above the B–UVW1 interpolation in νF_ν
+  (Mg II and the Balmer continuum in U): an example for `--spectrum file:`.
+- **Not done (later):** the end-to-end check with Gaia XP spectra of field
+  stars (planned validation 3); host-galaxy dust; `--fit-alpha`.

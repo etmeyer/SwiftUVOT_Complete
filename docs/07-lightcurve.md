@@ -254,12 +254,13 @@ awk '$2 == "UVW1" && $7 == "detected"' UVOT_output/uvot_lightcurve.txt | less -S
 
 1. **Re-run after Step 6** (a new rule, limit or override).
 
-2. **Fluxes are not dereddened.** Galactic extinction correction is a
-   separate, planned script.
+2. **Fluxes are not dereddened.** [Step 8](08-flux.md) corrects for
+   Galactic dust (and, for a distant source, the intergalactic medium).
 
 3. **The conversion assumes `uvotsource`'s spectrum.** Its flux factors are
    for an average spectrum; for strong emission lines or very red sources
-   the flux density in a broad UV filter can be off. Count rates are the
+   the flux density in a broad UV filter can be off ([Step 8](08-flux.md)
+   folds a spectrum of your choice through the filters). Count rates are the
    safe quantity.
 
 4. **`mag_sys` is not in `mag_err`.** Add it when comparing with other

@@ -124,6 +124,8 @@ terminal and then lists which steps the terminal can run. It checks that:
 - the Python packages are importable,
 - the Gaia archive answers (Step 4 fetches its field stars once per
   analysis; a warning, not a failure),
+- the IRSA dust service answers (Step 8 fetches the Galactic E(B−V) once
+  per analysis; a warning, not a failure),
 - there is free disk where the data will go (`--data-dir`) and where the
   runner makes its working folders.
 
