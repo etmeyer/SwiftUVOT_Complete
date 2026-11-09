@@ -17,7 +17,10 @@ Two modes:
   Swift master catalog (`swiftmastr`) within 12′, applies the date window and
   prints one row per observation with its UVOT exposure per filter. Nothing
   is downloaded. With `--obsid`/`--obsid-file` it looks those OBSIDs up in
-  the catalog and lists them the same way.
+  the catalog and lists them the same way. If the first query service
+  fails, the script tries others; results outside the 12′ circle are
+  dropped with a warning (one fallback service, asked for a position
+  without observations, returned 10,000 unrelated ones).
 - **Download**: the same query, then the files, then a check of what arrived
   against the catalog, and a report.
 

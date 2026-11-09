@@ -75,7 +75,8 @@ DEFAULT_FLOOR = 0.015
 DEFAULT_NSIGMA = 3.0
 SCATTER_P = 0.001     # chi^2 probability below which a point is flagged
 KEPT_FLAGS = ('high_coi', 'jitter_ok', 'discrepant', 'sss_mid', 'sss_high',
-              'psf_broad', 'psf_unchecked', 'recentred', 'pointing_unsure')
+              'psf_broad', 'psf_unchecked', 'recentred', 'pointing_unsure',
+              'senscorr_frozen')
 # Additive background systematic, as a fraction of the background in the
 # 5" aperture, added once to each combined point. Measured on blank sky:
 # 26 empty random positions in every included PKS 0537-286 exposure, run

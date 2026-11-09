@@ -168,8 +168,10 @@ centroid and shape are noise. The stars around it can. Step 4 fetches the
 Gaia DR3 sources within 9′ of your source once per analysis (ESA archive,
 asynchronous TAP; G < 21) and keeps them in `UVOT_output/uvot_gaia.txt`,
 with the service, query, date and position in its header. Later runs read
-that file. With no network and no cache Step 4 stops and says so;
-`--no-field-stars` runs without them.
+that file. When the archive is busy (HTTP 429 or 503) Step 4 waits
+30, 60, then 120 s, or as long as the archive asks, and retries. With no
+network and no cache Step 4 stops and says so; `--no-field-stars` runs
+without them.
 
 **Pointing.** Without aspect correction an exposure's coordinates can be
 wrong, sometimes by much more than the 5″ aperture. In each exposure the

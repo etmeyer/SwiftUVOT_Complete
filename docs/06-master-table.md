@@ -75,6 +75,10 @@ a few per cent would throw away points like PKS 0537−286's 2022 flare
   (over 1″). `pointing_unsure`: that offset is uncertain by more than 1.5″
   (borrowed from a snapshot whose filters disagree).
 - `short`: exposure under 20 s.
+- `senscorr_frozen`: taken after the CALDB stops updating the
+  sensitivity-loss correction for its filter. With v007: V and U from 2022,
+  the UV filters from 2024, B from 2026. V and U then read about 1.3 % per
+  year low ([below](#sensitivity-loss-after-the-calibration-ends)).
 - `discrepant`: the rate differs from the error-weighted mean of the rest of
   its observation and filter by more than 10 % and 5σ, both errors combined.
 - `override:N`: included by line N despite the listed rules.
@@ -96,6 +100,53 @@ and `flags` names the override line.
 **Changes.** Each run compares `include` with the previous master table and
 lists the exposures that changed, so a new rule, limit or override shows its
 effect at once.
+
+### Sensitivity loss after the calibration ends
+
+**The problem.** The detector slowly loses sensitivity, by up to a few
+per cent per year depending on the filter. `uvotsource` corrects every
+rate with the CALDB's `SENSCORR` file, a fit to repeated observations of
+standard stars. The current file (v007) used data up to 2023-08-01, and
+after a date per filter its correction stops changing: V and U from
+2022-01-01, UVW1, UVM2 and UVW2 from 2024-01-01, B from 2026-01-01
+(WHITE from 2022). If the detector kept losing sensitivity, later rates
+read low.
+
+**What the step does.** It reads those dates from the CALDB file itself
+(the first row after its last change) and flags later exposures
+`senscorr_frozen`. Nothing is excluded or corrected: the size of the
+effect is a measurement, below, not a calibration.
+
+**How big it is.** Constant stars, measured with Steps 3–6 like any
+source, each normalised to its 2015–2021 median. The slope after the
+freeze is a robust fit (outliers down-weighted), with a bootstrap error:
+
+| Field | Filter | Exposures after the freeze | Slope after 2022 (%/yr) | Yearly medians 2024, 2025, 2026 |
+| ----- | ------ | -------------------------- | ----------------------- | ------------------------------- |
+| 4 Gaia stars near OJ 287 (G = 14.5–15.9) | V | 888 | −1.38 ± 0.09 (stars −0.8 to −1.9) | 0.968, 0.955, 0.915 |
+| | U | 895 | −1.16 ± 0.09 (stars −0.2 to −1.6) | 0.971, 0.961, 0.917 |
+| | B (still corrected) | 951 | +0.14 ± 0.07 | 1.007, 1.008, 0.961 |
+| WD 1657+343 (white dwarf, standard star) | V, U | 2 (2026) | – | 2026: 0.968, 0.965 |
+| | UVW1, UVM2, UVW2 | 10–13 | −0.3 to −0.8 ± 0.25 | 0.95–0.97 (2024), 0.96–0.97 (2025), 1.00–1.02 (2026) |
+
+Before 2022 every star is flat to 0.2 % per year in every filter, so the
+method is sound. B, still corrected through 2025, stays flat after 2022:
+the drop in V and U is not something these fields or the processing do.
+
+- **V and U:** a steady decline of about 1.3 % per year after 2022, so
+  about 4 % low in 2025 and 8 % in 2026 (only 4 exposures per star so
+  far, January to October). The rate differs from star to star (0.8 to
+  1.9 % per year in V), more than the errors allow; the two brightest
+  stars fall fastest. The cause is not known: it may depend on the
+  brightness or on the position on the detector.
+- **UV:** no clear decline after the 2024 freeze. The white dwarf reads
+  3–5 % low in 2024–25 and back at 1.00 in 2026; the epochs scatter by
+  2–3 %.
+- **B:** frozen only from 2026; too early to tell.
+
+Use the flag to fit or check V and U trends in data after 2022, or to
+leave those points out of a comparison across the break. A slow fade of
+1–2 % per year in V or U after 2022 may be the detector, not the source.
 
 ### How the limits were set
 
@@ -185,7 +236,7 @@ For all of 3C 273:
           step3:not_covered           41
           jitter                      15
           step3:partial                3
-[summary] flags on included exposures: discrepant 1, high_coi 138, jitter_ok 15, no_aspcorr 752, psf_broad 2, psf_unchecked 24, short 437, sss_edge 150, sss_high 111, sss_mid 215
+[summary] flags on included exposures: discrepant 1, high_coi 138, jitter_ok 15, no_aspcorr 752, psf_broad 2, psf_unchecked 24, senscorr_frozen 97, short 437, sss_edge 150, sss_high 111, sss_mid 215
 [check] included exposures that differ from the rest of their observation by more than 10 % and 5 sigma: 1
           00089029001 U     uu615761377I rate 338.45 +- 2.34
 ```
@@ -294,6 +345,11 @@ awk '$1 == "obsid" || ($2 == "UVW1" && $33 == "yes")' UVOT_output/uvot_master_ta
    pointing, and flagged `psf_broad` when the PSF is broad (most of them).
    Without field stars (`--no-field-stars`, or none in the exposure) they
    are excluded.
+
+6. **V and U after 2022 read low.** The CALDB's sensitivity-loss
+   correction stops changing in 2022 for V and U; constant stars then fall
+   about 1.3 % per year (`senscorr_frozen`, [above](#sensitivity-loss-after-the-calibration-ends)).
+   A newer `SENSCORR` file fixes this: the flag dates follow the CALDB.
 
 ## Notes
 

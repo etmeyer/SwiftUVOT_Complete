@@ -539,3 +539,33 @@ Logged during **Step 8** (flux densities, dereddened; branch `flux-step8`).
   (Mg II and the Balmer continuum in U): an example for `--spectrum file:`.
 - **Not done (later):** the end-to-end check with Gaia XP spectra of field
   stars (planned validation 3); host-galaxy dust; `--fit-alpha`.
+
+Logged during the **SENSCORR drift study** (branch `senscorr-frozen`).
+
+- **Why:** the CALDB `SENSCORR` v007 (fit to data up to 2023-08-01) holds
+  each filter's sensitivity-loss correction constant from a date on (V, U,
+  WHITE 2022; UV 2024; B 2026). Question: do later rates drift? User
+  decision: flag only (`senscorr_frozen`, dates read from the CALDB file),
+  measure, no correction.
+- **WD 1657+343** (standard star, all six filters; Steps 3–7 with
+  `--no-field-stars`): pre-freeze slopes ≤ 0.2 %/yr. UV after 2024:
+  0.95–0.97 in 2024–25, 1.00 in 2026, epoch scatter 2–3 %: no clear
+  decline. V and U: only 2 exposures after 2022 (2026), 0.968 and 0.965.
+- **OJ 287 field, 4 Gaia stars** (G 14.5–15.9, isolated, not variable;
+  ~890 V/U exposures after 2022): V −1.38 ± 0.09 %/yr, U −1.16 ± 0.09
+  %/yr after 2022 (robust IRLS fit, bootstrap error, each star normalised
+  to 2015–21); B (still corrected) +0.14 ± 0.07. Yearly medians V 0.968
+  (2024), 0.955 (2025), 0.915 (2026, 4 exposures per star). Star-to-star
+  spread 0.8–1.9 %/yr in V, larger than errors; the two brightest stars
+  steepest (cause unknown: counts per frame 0.07–0.19, or detector
+  position). Not followed up: a fit against detector position or counts
+  per frame; a correction option (`--senscorr-extrapolate`?) if the user
+  wants one.
+- **3C 273:** `senscorr_frozen` on 97 included exposures (78 light-curve
+  rows); no include or status changes.
+- **Found on the way:** the download's fallback query (W3Browse) returned
+  10,000 unrelated observations for a position without data (WD 0308−565):
+  results outside the cone are now dropped. Gaia archive HTTP 429 stopped
+  Step 4: it now retries (30/60/120 s or Retry-After).
+- Fit scripts, star list and run script: `_dev_internal/2026-11-09_senscorr_drift/`
+  (not in the repo).
