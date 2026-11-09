@@ -290,8 +290,8 @@ def check_required_pkgs():
         if _ilu.find_spec(imp) is not None:
             emit(OK, "%-12s %s" % (imp, _pkg_version(dist)))
         elif imp == "requests":
-            emit(WARN, "requests     not importable -- only Step 2 "
-                 "(download) needs it")
+            emit(WARN, "requests     not importable -- Step 2 (download) "
+                 "and Step 4's Gaia field stars need it")
         else:
             emit(FAIL, "%-12s NOT IMPORTABLE (pip install %s)" % (imp, dist))
 
@@ -302,6 +302,28 @@ def check_optional_pkgs():
     else:
         emit(WARN, "astroquery not installed (optional; name resolution "
              "falls back to SIMBAD/NED/Sesame)")
+
+
+def check_gaia():
+    """Can Step 4 reach the Gaia archive (field stars)?"""
+    if _ilu.find_spec("requests") is None:
+        emit(WARN, "Gaia archive: not checked (no requests)")
+        return
+    import requests
+    import swift_uvot_fieldstars as fs
+    try:
+        r = requests.get(fs.GAIA_TAP + "/availability", timeout=20)
+        if r.status_code == 200 and "true" in r.text.lower():
+            emit(OK, "Gaia archive reachable (%s), for Step 4's field "
+                 "stars" % fs.GAIA_TAP)
+        else:
+            emit(WARN, "Gaia archive answered HTTP %d: Step 4 needs it once "
+                 "per analysis (or run it with --no-field-stars)"
+                 % r.status_code)
+    except Exception as exc:
+        emit(WARN, "Gaia archive not reachable (%s): Step 4 needs it once "
+             "per analysis, then uses its cache (or run it with "
+             "--no-field-stars)" % exc.__class__.__name__)
 
 
 def check_disk(data_dir):
@@ -434,7 +456,7 @@ def main(argv=None):
 
     checks = [check_path, check_heasoft, check_heasoft_version, check_caldb,
               check_uvot_caldb, check_senscorr, check_python,
-              check_required_pkgs, check_optional_pkgs,
+              check_required_pkgs, check_optional_pkgs, check_gaia,
               lambda: check_disk(args.data_dir)]
     if args.test_image:
         checks.append(lambda: check_test_image(args.test_image, args.ra,

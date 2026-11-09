@@ -10,7 +10,7 @@ looking at, with their regions drawn on.
 
 Run both in the HEASoft terminal (`setup_swiftuvot; heainit`), from the
 analysis folder that holds `UVOT_input` and `UVOT_output`. For all of
-3C 273 (2,891 candidate exposures) the positions take about 11 minutes on
+3C 273 (2,891 candidate exposures) the positions take about 13 minutes on
 4 cores, and the viewer about 20 seconds.
 
 ## What runs
@@ -25,6 +25,8 @@ swift_uvot_viewer.py                    # -> UVOT_output/uvot_positions.pdf
 | `--ra` / `--dec` | Your source position; must match the one Step 3 used |
 | `--outdir` | Step 3's output folder (default `UVOT_output`) |
 | `--nproc` | Parallel workers (default: the CPUs the run may use, at most 8; pin a shell with `taskset -c 17-20 bash` and runs follow) |
+| `--no-field-stars` | Skip the Gaia field stars: no pointing correction, no PSF columns |
+| `--gaia-offline` | Use only the cached Gaia list (`uvot_gaia.txt`); stop if there is none for this position |
 
 `swift_uvot_viewer.py` takes `--outdir`, `--pdf`, `--per-category` (cutouts
 per category, default 48) and `--obsid` (every exposure of the given
@@ -159,6 +161,87 @@ faint PKS 0537−286, 5 of 363 exposures drop a sector, 23 use an offset
 circle, and 125 lose a read-out strip from one of the G ≈ 10 stars 3–5′
 away.
 
+### Field stars: pointing and PSF
+
+A faint source cannot say where it is or how sharp its image is: its own
+centroid and shape are noise. The stars around it can. Step 4 fetches the
+Gaia DR3 sources within 9′ of your source once per analysis (ESA archive,
+asynchronous TAP; G < 21) and keeps them in `UVOT_output/uvot_gaia.txt`,
+with the service, query, date and position in its header. Later runs read
+that file. With no network and no cache Step 4 stops and says so;
+`--no-field-stars` runs without them.
+
+**Pointing.** Without aspect correction an exposure's coordinates can be
+wrong, sometimes by much more than the 5″ aperture. In each exposure the
+60 brightest peaks within 4′ of your source are paired with every Gaia
+source (G < 19.5) within 5′ of them. The offset shared by the most pairs
+wins: random pairs spread over the whole range, while the true offset gets
+one vote per star. The stars' centroids near that offset then refine it,
+and at least 3 must agree (to 0.7″). Columns `pnt_dra`, `pnt_ddec` (image
+minus Gaia, arcsec), `pnt_n` (stars) and `pnt_err`. An exposure with too
+few stars of its own (short UVM2) borrows the median offset of the other
+filters of the same snapshot, which share the spacecraft attitude
+(`pnt_src = snapshot`).
+
+When the offset is over 1″, Step 4 works in the corrected coordinates and
+writes the regions where your source really is in that image (`center =
+stars`; the reason gives the offset). If your source is bright, its own
+centroid still decides (`center = centroid`). If the corrected position
+falls outside the exposed field, the status is `not_covered`: Step 3 judged
+the coverage with the wrong coordinates.
+
+For aspect-corrected PKS 0537−286 exposures the stars agree with Gaia to
+0.1–0.3″, so nothing moves. Its four unaspected exposures of 2005-11-24
+(00035240001, second snapshot: V, UVW1, UVM2, UVW2) are off by 3.4′ (+54″,
++198″, all four alike), so PKS 0537−286 was not in the exposed field at
+all. Until PR1b they were measured at an empty patch of sky 3.4′ away, and
+read zero.
+
+**PSF.** Each isolated Gaia star (G < 19.5, no source brighter than
+G + 2.5 within 15″, RUWE ≤ 1.4, 15–300″ from your source) that reaches S/N
+20 at ≤ 0.3 counts per frame gets its concentration measured, the same 5″/15″
+ratio as your source's, with its error. Divided by the same star's median in
+normal exposures (aspect-corrected, outside the jitter period), it says
+how much a broad or smeared PSF pushes out of the 5″ circle: `psf_loss` =
+1 − the weighted mean of the stars' relative concentrations (a star more
+than 4σ from the others is dropped), with `psf_loss_err`. The stars' axis
+ratio and width are listed too (`star_ar`, `star_sigma`). An exposure with
+no star of its own borrows the snapshot's other filters, with their spread
+as the error (`psf_src = snapshot`). Every star measurement is in
+`uvot_field_stars.txt`.
+
+On stars of known flux (24 Gaia stars measured with `uvotsource` in every
+PKS 0537−286 exposure), `psf_loss` predicts the light the 5″ circle really
+loses:
+
+| `psf_loss` | Exposures | Star rate / its true rate | 1 − `psf_loss` |
+| ---------- | --------- | ------------------------- | -------------- |
+| below 0.02 | 245 | 1.003 | 0.999 |
+| 0.02–0.05 | 9 | 0.995 | 0.976 |
+| 0.05–0.10 | 8 | 0.931 | 0.929 |
+| 0.10–0.20 | 6 | 0.916 | 0.837 |
+| 0.20–0.30 | 5 | 0.788 | 0.776 |
+
+Above 5 % loss it is right on average to a few per cent but scatters by
+about 0.4 × the loss per exposure. Step 6 uses it as a flag, Step 7
+optionally as a correction.
+
+3C 273 lies at high Galactic latitude, where there are few stars: the
+pointing is measured in 1,003 of 2,891 exposures (1,561 more borrow it from
+their snapshot). Aspect-corrected exposures agree with Gaia to 0.24″
+(median; 90 % within 0.39″), unaspected ones to 0.23″ (largest 2.7″). The
+correction (over 1″) applies to 15 exposures. In all of them 3C 273's own
+centroid then places the region. One is 00035017085's U exposure, which an
+uncorrected 3.35″ offset had left at the catalogue position with half the
+light missed: centred, it reads 396 instead of 251 counts/s (it is
+saturated, so Step 6 still excludes it).
+
+For PKS 0537−286 the PSF is measured in 358 of 363 exposures (22 borrowed
+from the snapshot). 35 lose more than 3 %: the 2022-06-02 flare
+(00030816013: V 7 %, UVW1/UVW2 10 %, UVM2 6 %; U and B normal) and the
+2023 jitter-period observations (8–40 %; the second snapshot of
+00030816018 is normal, and 00030816019 loses 3–7 % in V, B and U).
+
 ### The viewer
 
 `swift_uvot_viewer.py` writes one PDF. The summary page shows the axis ratio
@@ -195,8 +278,8 @@ in the title.
   tracks a few hundred arcseconds long. The pointing moved during the
   exposure, and the archive builds an event-mode sky image with one pointing
   (Step 3). For a faint source the same S/N could just mean a
-  non-detection; telling the two apart needs field stars (planned for faint
-  targets).
+  non-detection; the field stars tell the two apart (`pnt_*` and
+  `psf_loss`).
 - **Offsets over 3″** (104): mostly event-mode openers and jitter-period
   exposures.
 - **Low-sensitivity patches.** For 3C 273 the LOW maps flag 13 % of the
@@ -220,6 +303,9 @@ UVOT_output/
 ├── uvot_positions.txt       one row per candidate exposure (columns below)
 ├── uvot_detections.txt      uvotdetect sources within 150" of your source, with
 │                            rate, counts per frame and mask radius
+├── uvot_gaia.txt            Gaia DR3 sources within 9' (the cache; delete it to query again)
+├── uvot_field_stars.txt     every PSF star in every exposure: offset, S/N, counts per
+│                            frame, axis ratio, width, concentration (and relative)
 ├── uvot_positions.pdf       the viewer's contact sheets
 ├── detections/              uvotdetect output and logs, per observation and filter
 └── regions/<OBSID>/
@@ -235,16 +321,19 @@ UVOT_output/
 | `offset`, `d_ra`, `d_dec` | Centroid minus `--ra`/`--dec` (arcsec; `d_ra` along the sky); only at S/N ≥ 10 |
 | `axis_ratio`, `sig_major`, `sig_minor`, `major_pa` | Shape: ratio of the axes, their sizes (arcsec), the major axis' position angle (deg east of north); only at S/N ≥ 10 |
 | `conc`, `conc_err` | Net counts in the 5″ source region / in a 15″ circle (point source 0.86–0.88), and its error; only where the error is ≤ 0.02 |
-| `center` | Where the source region is: `centroid`, `catalog`, or `override:<line>` |
-| `src_ra`, `src_dec` | The source region's centre |
+| `center` | Where the source region is: `centroid`, `catalog`, `stars` (catalogue position moved by the field stars' pointing offset), or `override:<line>` |
+| `src_ra`, `src_dec` | The source region's centre, in the image's own coordinates (what `uvotsource` reads) |
 | `detx`, `dety` | The source's detector position |
 | `sss_low`, `sss_mid`, `sss_high` | CALDB small-scale-sensitivity value there (`-99.9`: on a patch) |
 | `sss_low_frac` | Fraction of the 5″ circle on a LOW patch |
 | `bkg_type`, `bkg_area`, `n_excl`, `n_strip`, `n_sect` | `annulus`, `circle`, `override:<line>` or `none`; area (arcsec²); masked sources, read-out strips and dropped sectors in it |
 | `bkg5` | Step 4's background in the 5″ circle (counts/s); compare with Step 5's |
 | `sky` | The sky (counts/s/arcsec²) the mask radii were set against |
+| `pnt_dra`, `pnt_ddec`, `pnt_n`, `pnt_err`, `pnt_src` | Pointing offset from the field stars (image − Gaia, arcsec), how many stars, its uncertainty, `stars` or `snapshot` |
+| `n_stars`, `star_conc`, `star_conc_err`, `star_ar`, `star_sigma` | PSF stars used; their concentration relative to normal exposures, its error; their median axis ratio and width (arcsec) |
+| `psf_loss`, `psf_loss_err`, `psf_src` | Light the 5″ circle loses to a broad PSF (1 − `star_conc`), its error, `stars` or `snapshot` |
 | `src_reg`, `bkg_reg` | The region files |
-| `status`, `reason` | `ok`, `no_background` or `failed`; why the region is not at the centroid, and flags such as `trailed or smeared` |
+| `status`, `reason` | `ok`, `no_background`, `not_covered` (only after a pointing correction) or `failed`; why the region is where it is, and flags such as `trailed or smeared` |
 
 ### Overrides
 
@@ -259,7 +348,10 @@ To set a position or a background by hand, create
 ```
 
 `*` matches anything. `src` takes an RA and Dec in degrees, or `catalog`;
-`bkg` takes an fk5 region in `uvotsource`'s syntax. The `center` and
+`bkg` takes an fk5 region in `uvotsource`'s syntax. Both are in the image's
+own coordinates (what you read off that image in ds9), also for an exposure
+whose pointing Step 4 corrected; `src catalog` means the catalogue position
+in corrected coordinates. The `center` and
 `bkg_type` columns name the override line used. The automatic choice is
 recomputed every run, so the file is the one place your decisions live.
 
@@ -297,6 +389,17 @@ grep "trailed or smeared" UVOT_output/uvot_positions.txt | less -S
 
 6. **Re-running replaces the region files** for every candidate; keep your
    own choices in the overrides file.
+
+7. **The Gaia list is cached.** Delete `UVOT_output/uvot_gaia.txt` to query
+   again (it is also queried again if `--ra`/`--dec` change). The field
+   needs a few stars: in a sparse field (3C 273, high Galactic latitude)
+   short exposures often have none, and borrow from their snapshot or stay
+   unchecked.
+
+8. **The PSF stars must be point sources.** Gaia DR3 contains some compact
+   galaxies; each star is compared only with itself, so a galaxy's own
+   concentration does not matter, but a variable or blended one adds
+   scatter. The weighted mean drops a star more than 4σ from the others.
 
 ## Notes
 

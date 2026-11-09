@@ -74,7 +74,8 @@ FILTERS = ('V', 'B', 'U', 'UVW1', 'UVM2', 'UVW2')
 DEFAULT_FLOOR = 0.015
 DEFAULT_NSIGMA = 3.0
 SCATTER_P = 0.001     # chi^2 probability below which a point is flagged
-KEPT_FLAGS = ('high_coi', 'jitter_ok', 'discrepant', 'sss_mid', 'sss_high')
+KEPT_FLAGS = ('high_coi', 'jitter_ok', 'discrepant', 'sss_mid', 'sss_high',
+              'psf_broad', 'psf_unchecked', 'recentred', 'pointing_unsure')
 # Additive background systematic, as a fraction of the background in the
 # 5" aperture, added once to each combined point. Measured on blank sky:
 # 26 empty random positions in every included PKS 0537-286 exposure, run
@@ -83,6 +84,7 @@ KEPT_FLAGS = ('high_coi', 'jitter_ok', 'discrepant', 'sss_mid', 'sss_high')
 # estimates). V, UVW1 and UVM2 need none.
 BKG_SYS = {'V': 0.0, 'B': 0.018, 'U': 0.018, 'UVW1': 0.0, 'UVM2': 0.0,
            'UVW2': 0.026}
+PSF_CORRECT_SYS = 0.4  # error of --psf-correct, as a fraction of the loss
 MAX_ITER = 50         # weight iterations (3C 273 needs at most 5)
 N_PRIOR = 40          # quadrature nodes over the background's uncertainty
 
@@ -155,20 +157,41 @@ def conversion_factors(photometry, outdir):
     return factors
 
 
-def exposure_inputs(r, p):
+def psf_factor(r):
+    """(1 - loss, relative error of that) from the field stars, for an
+    exposure whose own shape was not measured; None otherwise."""
+    loss, err = _num(r.get('psf_loss')), _num(r.get('psf_loss_err'))
+    if loss != loss or _num(r.get('conc')) == _num(r.get('conc')):
+        return None
+    # never more than x5; a slightly negative loss (noise around zero)
+    # corrects down as much as a positive one corrects up, so normal
+    # exposures are not pushed up on average
+    keep = min(max(1.0 - loss, 0.2), 1.1)
+    # On stars of known flux the corrected rates scatter by about 0.4 x
+    # the loss (PKS 0537-286 field, losses 5-30 %): far more than the
+    # statistical error of psf_loss, so that is the error used.
+    err = math.hypot(err, PSF_CORRECT_SYS * max(loss, 0.0))
+    return keep, err / keep
+
+
+def exposure_inputs(r, p, psf_correct=False):
     """The numbers the combination needs for one included exposure: its
     rate and error (master table) and its counts, areas and corrections
-    (Step 5 table)."""
+    (Step 5 table). psf_correct: divide by the light the field stars say
+    the 5" circle kept (1 - psf_loss), its error added in quadrature."""
     sss = _num(p['sss'])
-    return dict(
-        x=_num(r['rate']), e=_num(r['rate_err']), T=_num(r['exposure']),
+    f = psf_factor(r) if psf_correct else None
+    keep, rel = f if f else (1.0, 0.0)
+    return dict(psf_rel=rel, psf_corrected=f is not None,
+        x=_num(r['rate']) / keep, e=_num(r['rate_err']) / keep,
+        T=_num(r['exposure']),
         N=_num(p['src_cnts']), M=_num(p['bkg_cnts']),
         a_src=_num(p['src_area']), a_bkg=_num(p['bkg_area']),
         # corrected rate per raw count rate: coincidence loss, sensitivity
         # loss over time, small-scale sensitivity (-99.9 = not known),
         # large-scale sensitivity
         K=_num(p['coi']) * _num(p['senscorr']) * (sss if sss > 0 else 1.0)
-        / _num(p['lss']))
+        / _num(p['lss']) / keep)
 
 
 def model_weights(ex, floor):
@@ -197,6 +220,7 @@ def model_weights(ex, floor):
     a_src = np.array([d['a_src'] for d in ex])
     a_bkg = np.array([d['a_bkg'] for d in ex])
     K = np.array([d['K'] for d in ex])
+    rel = np.array([d.get('psf_rel', 0.0) for d in ex])
     B = M.sum() / np.sum(a_bkg * T) * a_src * T
     V = (a_src / a_bkg) ** 2 * np.maximum(M, 1.0)
     R = float(np.sum(T * x) / np.sum(T))
@@ -205,7 +229,7 @@ def model_weights(ex, floor):
         Rp = max(R, 0.0)
         E = Rp * T / K + B
         w = 1.0 / (e ** 2 * (E + V) / (np.maximum(N, 1.0) + V)
-                   + (floor * Rp) ** 2)
+                   + (floor * Rp) ** 2 + (rel * Rp) ** 2)
         R_new = float(np.sum(w * x) / np.sum(w))
         step, R = abs(R_new - R), R_new
         if step <= 1e-6 / math.sqrt(np.sum(w)):
@@ -213,7 +237,7 @@ def model_weights(ex, floor):
             break
     if not converged:     # exposure weighting: unbiased, a little less precise
         R = float(np.sum(T * x) / np.sum(T))
-        w = 1.0 / (e ** 2 + (floor * max(R, 0.0)) ** 2)
+        w = 1.0 / (e ** 2 + ((floor ** 2 + rel ** 2) * max(R, 0.0) ** 2))
         err = float(math.sqrt(np.sum(T ** 2 / w)) / np.sum(T))
         return R, err, float(np.sum(w * (x - R) ** 2)), False
     return (R, float(1.0 / math.sqrt(np.sum(w))),
@@ -262,7 +286,7 @@ def kbn_limit(n, b_nodes, b_w, cl):
     return float(brentq(lambda s: cdf(s) - cl, 0.0, hi, xtol=1e-6))
 
 
-def combine(rows, phot, floor, nsigma, eps):
+def combine(rows, phot, floor, nsigma, eps, psf_correct=False):
     """One light-curve point (dict) from the master-table rows of one
     observation and filter. phot: Step 5 rows by (obsid, extname); eps:
     additive background systematic (fraction of the background in the
@@ -274,8 +298,8 @@ def combine(rows, phot, floor, nsigma, eps):
     point = {'n_total': len(rows), 'n_used': len(used)}
     reasons = []
     if used:
-        ex = [exposure_inputs(r, phot[(r['obsid'], r['extname'])])
-              for r in used]
+        ex = [exposure_inputs(r, phot[(r['obsid'], r['extname'])],
+                              psf_correct) for r in used]
         rate, err_stat, c2, converged = model_weights(ex, floor)
         if not converged:
             reasons.append('weights did not converge: exposure-weighted mean')
@@ -307,6 +331,8 @@ def combine(rows, phot, floor, nsigma, eps):
                         if f.split(':')[0] in KEPT_FLAGS})
         if reasons and reasons[-1].startswith('exposures disagree'):
             flags.append('scatter')
+        if any(d['psf_corrected'] for d in ex):
+            flags.append('psf_corrected')
         point['flags'] = ','.join(flags) or '-'
     else:
         sat = [r for r in rows if r['rules'] == 'saturated']
@@ -423,6 +449,15 @@ def plot_lightcurve(pdf_path, points, src_label):
                                 mfc='white' if flagged else ink,
                                 label='high_coi (U, ~8 % low)' if flagged
                                 else 'detected')
+            # broad PSF (field stars): a ring around the point
+            pts = [p for p in sel if 'psf_broad' in p['flags']
+                   and p['status'] in ('detected', 'upper_limit')]
+            if pts:
+                ax.scatter([year(p) for p in pts],
+                           [float(p['flux_mjy']) for p in pts], s=90,
+                           facecolors='none', edgecolors='#c0392b', lw=0.9,
+                           label='psf_broad (field stars: >= 3 % lost)',
+                           zorder=4)
             # limits as arrows from the limit, a quarter of its value long
             for status, label in (('lower_limit', 'lower limit (saturated)'),
                                   ('upper_limit', 'upper limit (KBN)')):
@@ -468,6 +503,12 @@ def main(argv=None):
                              '(others keep their default); 0 to switch off '
                              '(default: %s)' % ','.join(
                                  '%s=%g' % kv for kv in BKG_SYS.items()))
+    parser.add_argument('--psf-correct', action='store_true',
+                        help='divide each exposure whose own shape was not '
+                             'measured by the light its field stars say the '
+                             '5" circle kept (1 - psf_loss), adding that '
+                             'error (default: off; psf_broad points are '
+                             'flagged)')
     args = parser.parse_args(argv)
     if not 1.0 <= args.nsigma <= 8.0:
         print('ERROR: --nsigma must be between 1 and 8', file=sys.stderr)
@@ -512,7 +553,7 @@ def main(argv=None):
     points = []
     for (obsid, filt), rows in sorted(groups.items()):
         p = combine(rows, phot, args.floor, args.nsigma,
-                    bkg_sys.get(filt, 0.0))
+                    bkg_sys.get(filt, 0.0), args.psf_correct)
         row = {'obsid': obsid, 'filter': filt, 'status': p['status'],
                'n_used': p['n_used'], 'n_total': p['n_total'],
                'date_mid': p.get('date_mid'), 'chi2_red': p.get('chi2_red'),
@@ -545,6 +586,9 @@ def main(argv=None):
         'rate_sens, mag_sens: the rate a source needs to be %g sigma above '
         'the background alone (sensitivity, not an upper limit)'
         % args.nsigma,
+        'PSF correction from the field stars: %s' % (
+            'on (flag psf_corrected)' if args.psf_correct else
+            'off (--psf-correct; psf_broad marks a loss >= 3 %)'),
         'mag/mag_err Vega, ab_mag AB; mag_sys: absolute calibration error '
         '(not in mag_err); flux_aa erg/s/cm^2/A, flux_mjy mJy; times MJD (UTC)',
     ]

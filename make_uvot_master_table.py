@@ -34,8 +34,12 @@ documentation):
     smeared         concentration (5"/15" counts) below 0.82 (not applied
                     to saturated exposures: their rate is a lower limit)
     elongated       axis ratio above 1.5
-    jitter          taken during the 2023-24 spacecraft jitter with no
-                    measurable PSF (otherwise the shape rules decide)
+    psf             only with --psf-max-loss: the source's own shape is not
+                    measurable and the field stars show a larger loss
+    jitter          taken during the 2023-24 spacecraft jitter without a
+                    PSF check (the source's shape or the field stars') or
+                    without a trusted pointing (aspect correction, the
+                    source's centroid, or the field stars)
     duplicate       same EXPID as an included exposure
     override:N      excluded by line N of uvot_overrides.txt
 
@@ -45,7 +49,11 @@ circle on a LOW patch), jitter_ok (jitter period, PSF check passed), high_coi
 (U above 0.90 counts per frame: about 8 % low), no_aspcorr, short
 (exposure under 20 s), discrepant (differs from the rest of its
 observation by more than 10 % and 5 sigma), override:N (included by line N,
-despite the rules listed).
+despite the rules listed). From the field stars, when the source's own
+shape cannot be measured: psf_broad (the 5" circle loses >= 3 % to a broad
+PSF, at >= 2 sigma), psf_unchecked (no stars to tell); and recentred (Step
+4 moved the regions by the stars' pointing offset), pointing_unsure (that
+offset uncertain by more than 1.5").
 
 Output (in --outdir):
     uvot_master_table.txt   one row per exposure
@@ -58,9 +66,11 @@ Usage:
     make_uvot_master_table.py
     make_uvot_master_table.py --sss-level MID
     make_uvot_master_table.py --coincidence-limit U=0.95
+    make_uvot_master_table.py --psf-max-loss 0.05
 """
 
 import argparse
+import math
 import os
 import re
 import sys
@@ -70,6 +80,7 @@ from datetime import datetime, timezone
 import numpy as np
 
 import swift_uvot_env as uenv
+import swift_uvot_fieldstars as fs
 from swift_uvot_tables import read_table, write_table
 
 SATURATION = 0.98               # uvotsource caps counts per frame here
@@ -88,21 +99,26 @@ SHORT_EXPOSURE = 20.0           # s
 DISCREPANT_FRACTION, DISCREPANT_SIGMA = 0.10, 5.0
 # Swift's gyro noise: UVOT images degraded from about 2023-08-07 (GCN 34633)
 # until UVOT was re-enabled in two-gyro mode on 2024-04-04 (GCN 36033)
-JITTER = ('2023-08-07', '2024-04-04')
+JITTER = fs.JITTER
+# Field-star PSF (when the source's own shape cannot be measured): flag
+# psf_broad from this estimated loss of the 5" circle, if at least 2 sigma.
+# 3 % is the size of the floor the light curve allows per exposure.
+PSF_BROAD = 0.03
+POINTING_UNSURE = 1.5           # arcsec: a moved region this uncertain
 SSS_LEVELS = ('LOW', 'MID', 'HIGH')
 SSS_EDGE_FRACTION = 0.10        # of the 5" circle on a LOW patch: flagged
 OVERRIDES_FILE = 'uvot_overrides.txt'
 FILTERS = ('V', 'B', 'U', 'UVW1', 'UVM2', 'UVW2')
 # for the plot, an excluded exposure is shown under its first rule here
-RULE_ORDER = ('saturated', 'coincidence', 'jitter', 'off_centre', 'smeared',
+RULE_ORDER = ('saturated', 'coincidence', 'jitter', 'off_centre', 'smeared', 'psf',
               'elongated', 'sss', 'duplicate', 'override', 'step5', 'step4')
 
 COLUMNS = ['obsid', 'filter', 'extname', 'date_mid', 'mjd_mid', 'exposure',
            'frametime', 'mode', 'aspcorr', 'first', 'snr', 'offset',
            'axis_ratio', 'conc', 'center', 'sss_low', 'sss_mid', 'sss_high',
            'counts_frame', 'saturated', 'rate', 'rate_err', 'rate_lim', 'mag',
-           'mag_err', 'mag_sys', 'flux_aa', 'flux_aa_err', 'include', 'rules',
-           'flags']
+           'mag_err', 'mag_sys', 'flux_aa', 'flux_aa_err', 'pnt_offset',
+           'n_stars', 'psf_loss', 'psf_loss_err', 'include', 'rules', 'flags']
 
 
 def _num(value):
@@ -143,10 +159,11 @@ def matching_override(overrides, row):
     return found
 
 
-def judge(inv, pos, phot, sss_level, limits):
+def judge(inv, pos, phot, sss_level, limits, psf_max_loss=None):
     """
     (rules, flags) for one exposure; rules empty means include. limits:
-    counts-per-frame limit per filter.
+    counts-per-frame limit per filter; psf_max_loss: exclude above this
+    field-star PSF loss (None: flag only).
     """
     rules, flags = [], []
     if inv['status'] != 'candidate':
@@ -182,8 +199,29 @@ def judge(inv, pos, phot, sss_level, limits):
         rules.append('smeared')
     if ar > AXIS_RATIO_MAX:
         rules.append('elongated')
+    # The source's own shape cannot be judged (faint): the field stars say
+    # how much light a broad PSF pushes out of the 5" circle. Flag only by
+    # default: a 7-11 % loss can be worth keeping against a 22 % error.
+    loss, loss_err = _num(pos.get('psf_loss')), _num(pos.get('psf_loss_err'))
+    if conc != conc:
+        if loss != loss:
+            flags.append('psf_unchecked')
+        elif psf_max_loss is not None and loss > psf_max_loss:
+            rules.append('psf')
+        elif loss >= PSF_BROAD and loss >= 2 * loss_err:
+            flags.append('psf_broad')
+    if pos.get('center') == 'stars':
+        flags.append('recentred')
+        if _num(pos.get('pnt_err')) > POINTING_UNSURE:
+            flags.append('pointing_unsure')
     if JITTER[0] <= inv['date_mid'][:10] < JITTER[1]:
-        if conc != conc:    # no clear source within 15": no PSF to check
+        # in the jitter period an exposure needs a PSF check (its own shape
+        # or the field stars') and a pointing it can trust (aspect
+        # correction, its own centroid, or the field stars)
+        psf_known = conc == conc or loss == loss
+        pointing = inv['aspcorr'] == 'DIRECT' or pos.get('center') in (
+            'centroid', 'stars') or _num(pos.get('pnt_err')) <= 1.0
+        if not (psf_known and pointing):
             rules.append('jitter')
         elif not rules:
             flags.append('jitter_ok')
@@ -282,7 +320,8 @@ def plot_master(pdf_path, rows, src_label, limits):
     colors = {'included': 'C0', 'saturated': 'C3', 'coincidence': 'C1',
               'jitter': 'k', 'off_centre': 'C5', 'smeared': 'C4',
               'elongated': 'C6', 'sss': 'C8', 'duplicate': 'C7',
-              'override': 'C2', 'step5': 'C9', 'step4': 'C9'}
+              'override': 'C2', 'step5': 'C9', 'step4': 'C9',
+              'psf': 'tab:olive'}
 
     with PdfPages(pdf_path) as pdf:
         fig, axes = plt.subplots(1, 3, figsize=(11, 5))
@@ -335,6 +374,49 @@ def plot_master(pdf_path, rows, src_label, limits):
         fig.tight_layout(rect=(0, 0, 1, 0.94))
         pdf.savefig(fig)
         plt.close(fig)
+
+        # the field stars: PSF loss and pointing offset against time
+        star = [r for r in rows if r.get('psf_loss') not in (None, '-')
+                or r.get('pnt_offset') not in (None, '-')]
+        if star:
+            for r in star:
+                r['_year'] = Time(_num(r['mjd_mid']), format='mjd').decimalyear
+            fig, (a1, a2) = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
+            for f in FILTERS:
+                pts = [r for r in star if r['filter'] == f
+                       and r.get('psf_loss') not in (None, '-')]
+                if pts:
+                    a1.errorbar([r['_year'] for r in pts],
+                                [100 * _num(r['psf_loss']) for r in pts],
+                                yerr=[100 * _num(r['psf_loss_err'])
+                                      for r in pts], fmt='o', ms=3, lw=0.6,
+                                label=f)
+                pts = [r for r in star if r['filter'] == f
+                       and r.get('pnt_offset') not in (None, '-')]
+                if pts:
+                    a2.scatter([r['_year'] for r in pts],
+                               [max(_num(r['pnt_offset']), 0.05)
+                                for r in pts], s=8, label=f)
+            a1.axhline(100 * PSF_BROAD, color='k', ls=':', lw=0.8)
+            a1.axhline(0, color='grey', lw=0.6)
+            for edge in JITTER:
+                for ax_ in (a1, a2):
+                    ax_.axvline(Time(edge).decimalyear, color='grey', ls='--',
+                                lw=0.6)
+            a1.set_ylabel('light lost from 5" (%), field stars')
+            a1.legend(fontsize=7, ncol=6, loc='upper left')
+            a2.set_yscale('log')
+            a2.axhline(fs.RECENTRE_MIN, color='k', ls=':', lw=0.8)
+            a2.set_ylabel('pointing offset from Gaia (arcsec)')
+            a2.set_xlabel('year (dashed: the 2023-24 jitter period)')
+            fig.suptitle('Field stars per exposure (%s): PSF loss (dotted: '
+                         'psf_broad at %.0f %%) and pointing offset (dotted: '
+                         'regions moved above %.0f")' % (
+                             src_label, 100 * PSF_BROAD, fs.RECENTRE_MIN),
+                         fontsize=10)
+            fig.tight_layout(rect=(0, 0, 1, 0.95))
+            pdf.savefig(fig)
+            plt.close(fig)
 
         for f in FILTERS:
             sel = [r for r in measured if r['filter'] == f]
@@ -394,7 +476,18 @@ def main(argv=None):
                         metavar='FILTER=VALUE',
                         help='counts-per-frame limit for a filter (default: '
                              '0.95, U %.2f); can be repeated' % SATURATION)
+    parser.add_argument('--psf-max-loss', type=float, default=None,
+                        metavar='FRACTION',
+                        help='exclude (rule psf) exposures whose field stars '
+                             'show a larger loss of the 5" circle, when the '
+                             'source\'s own shape cannot be measured (e.g. '
+                             '0.05; default: flag only, psf_broad from %.2f)'
+                        % PSF_BROAD)
     args = parser.parse_args(argv)
+    if args.psf_max_loss is not None and not 0 < args.psf_max_loss < 1:
+        print('ERROR: --psf-max-loss must be between 0 and 1',
+              file=sys.stderr)
+        return 1
     limits = {f: COINCIDENCE_LIMIT.get(f, DEFAULT_COINCIDENCE_LIMIT)
               for f in FILTERS}
     for item in args.coincidence_limit:
@@ -458,7 +551,14 @@ def main(argv=None):
                 'counts_frame', 'saturated', 'rate', 'rate_err', 'rate_lim',
                 'mag', 'mag_err', 'mag_sys', 'flux_aa', 'flux_aa_err')})
             row['exposure'] = ph['exposure']
-        rules, flags = judge(inv, p, ph, args.sss_level, limits)
+        if p:
+            dra, ddec = _num(p.get('pnt_dra')), _num(p.get('pnt_ddec'))
+            if dra == dra:
+                row['pnt_offset'] = '%.2f' % math.hypot(dra, ddec)
+            row.update({k: p.get(k) for k in ('n_stars', 'psf_loss',
+                                              'psf_loss_err')})
+        rules, flags = judge(inv, p, ph, args.sss_level, limits,
+                             args.psf_max_loss)
         row['_rules'], row['_flags'] = rules, flags
         row['include'] = 'no' if rules else 'yes'
         rows.append(row)
@@ -498,9 +598,13 @@ def main(argv=None):
                                                     len(rows) - n_inc),
         'rules: saturated > %.2f counts/frame; coincidence above %s; sss at '
         '%s; off_centre; smeared conc < %.2f; elongated axis ratio > %.1f; '
-        'jitter %s to %s without a measurable PSF; duplicate EXPID'
-        % (SATURATION, limit_text, args.sss_level, CONC_MIN, AXIS_RATIO_MAX,
-           JITTER[0], JITTER[1]),
+        'jitter %s to %s without a PSF check or trusted pointing; psf %s; '
+        'duplicate EXPID' % (SATURATION, limit_text, args.sss_level, CONC_MIN,
+                             AXIS_RATIO_MAX, JITTER[0], JITTER[1],
+                             'loss > %.2f' % args.psf_max_loss
+                             if args.psf_max_loss else 'off (flag only)'),
+        'field stars: pnt_offset (arcsec) of the pointing from Gaia; n_stars, '
+        'psf_loss(_err): light the 5" circle loses to a broad PSF (Step 4)',
         'overrides: %s (%d line(s))' % (OVERRIDES_FILE, len(overrides)),
         'include: yes/no; rules: the rules that exclude the exposure (if an '
         'override includes it anyway, flags say so)',

@@ -46,7 +46,7 @@ the good ones into one point per observation and filter.
 | 1 | Setup and environment check (HEASoft, UVOT CALDB) — [docs](docs/01-setup.md) | `swift_uvot_doctor.py` | done |
 | 2 | Download UVOT data from the HEASARC archive — [docs](docs/02-download.md) | `swift_uvot_download.py` | done |
 | 3 | Inventory of every exposure (filter, frame time, aspect, field of view) — [docs](docs/03-inventory.md) | `swift_uvot_inventory.py` | done |
-| 4 | Source positions, shapes and regions; trailed and smeared images, sensitivity patches — [docs](docs/04-positions.md) | `swift_uvot_positions.py`, `swift_uvot_viewer.py` | done |
+| 4 | Source positions, shapes and regions; trailed and smeared images, sensitivity patches; field stars (pointing, PSF) — [docs](docs/04-positions.md) | `swift_uvot_positions.py`, `swift_uvot_viewer.py` | done |
 | 5 | Photometry of every exposure with `uvotsource` — [docs](docs/05-photometry.md) | `swift_uvot_photometry.py` | done |
 | 6 | Quality rules and overrides → master table — [docs](docs/06-master-table.md) | `make_uvot_master_table.py` | done |
 | 7 | Light curve: combine per observation and filter, plot — [docs](docs/07-lightcurve.md) | `swift_uvot_lightcurve.py` | done |
@@ -132,13 +132,19 @@ annulus minus the sources `uvotdetect` finds (each masked out to where its
 PSF wing falls below 0.5 % of the sky; saturated ones also lose a read-out
 strip) and minus any 45° sector that is too bright, or an offset circle
 when too little of the annulus is left or it is not evenly exposed. Its own
-background is the plain mean of what is left, as in `uvotsource`. Positions and
+background is the plain mean of what is left, as in `uvotsource`. Gaia DR3
+field stars (fetched once from the ESA archive and cached) give each
+exposure's pointing, which moves a faint source's regions when the image's
+coordinates are off (or marks it not covered), and its PSF: the light a
+broad or smeared image pushes out of the 5″ circle. Positions and
 backgrounds set in `UVOT_output/uvot_region_overrides.txt` win. Output:
-`UVOT_output/uvot_positions.txt`, `uvot_detections.txt`, `regions/`. Exits 1
-if any exposure failed.
+`UVOT_output/uvot_positions.txt`, `uvot_detections.txt`,
+`uvot_field_stars.txt`, `uvot_gaia.txt`, `regions/`. Exits 1 if any
+exposure failed.
 
 ```
 swift_uvot_positions.py --ra RA --dec DEC [--outdir UVOT_output] [--nproc N]
+                        [--no-field-stars] [--gaia-offline]
 ```
 
 ### `swift_uvot_viewer.py`
@@ -176,17 +182,21 @@ Joins Steps 3–5 into one row per exposure and decides by rule which ones the
 light curve uses (`include` yes/no, with the rules that excluded each):
 saturated, above 0.95 counts per frame (U: kept up to saturation but flagged above 0.90),
 on a LOW low-sensitivity patch, source off the region centre, smeared
-(concentration < 0.82), elongated (axis ratio > 1.5), no measurable PSF
-during the 2023–24 spacecraft jitter, duplicate exposure. The limits were
+(concentration < 0.82), elongated (axis ratio > 1.5), no PSF check or
+trusted pointing during the 2023–24 spacecraft jitter, duplicate exposure.
+For a faint source the field stars' PSF loss is a flag (`psf_broad`;
+`--psf-max-loss` to exclude). The limits were
 calibrated on 3C 273. The table is regenerated, never edited; decisions go
 in `UVOT_output/uvot_overrides.txt`. Lists the exposures whose `include`
 changed since the last run. Output: `UVOT_output/uvot_master_table.txt` and
-`uvot_master_table.pdf` (the rules against the data; every exposure's rate
-against time, included or excluded).
+`uvot_master_table.pdf` (the rules against the data; the field stars' PSF
+loss and pointing; every exposure's rate against time, included or
+excluded).
 
 ```
 make_uvot_master_table.py [--outdir UVOT_output] [--sss-level LOW|MID|HIGH]
                           [--coincidence-limit FILTER=VALUE ...]
+                          [--psf-max-loss FRACTION]
 ```
 
 ### `swift_uvot_lightcurve.py`
@@ -200,12 +210,13 @@ probability of the summed counts; upper limits by Kraft, Burrows & Nousek
 (99.87 %); a 3σ sensitivity column. Statuses: detected, upper limit, lower
 limit (all saturated), excluded, not covered. Count rates, Vega and AB
 magnitudes and flux densities with `uvotsource`'s own conversion; flags
-carried from the exposures. Output: `UVOT_output/uvot_lightcurve.txt` and
+carried from the exposures; optionally corrected for the field stars' PSF
+loss (`--psf-correct`). Output: `UVOT_output/uvot_lightcurve.txt` and
 `uvot_lightcurve.pdf`.
 
 ```
 swift_uvot_lightcurve.py [--outdir UVOT_output] [--floor 0.015] [--nsigma 3]
-                         [--bkg-sys FILTER=VALUE,...]
+                         [--bkg-sys FILTER=VALUE,...] [--psf-correct]
 ```
 
 ### `swift_uvot_runner.py`, `swift_uvot_env.py`, `swift_uvot_tables.py`

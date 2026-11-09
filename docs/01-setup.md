@@ -122,6 +122,8 @@ terminal and then lists which steps the terminal can run. It checks that:
 - the sensitivity-loss calibration is v007 or newer, and from when on it
   holds each filter's correction constant,
 - the Python packages are importable,
+- the Gaia archive answers (Step 4 fetches its field stars once per
+  analysis; a warning, not a failure),
 - there is free disk where the data will go (`--data-dir`) and where the
   runner makes its working folders.
 
