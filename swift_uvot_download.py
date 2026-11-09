@@ -270,8 +270,19 @@ def query_swift_master(ra: float, dec: float, radius_arcmin: float = 12.0) -> li
     for label, func in strategies:
         try:
             result = func()
-            if result:
-                return result
+            # Keep only pointings inside the cone: a fallback service can
+            # ignore the position when it finds nothing there (W3Browse
+            # returned 10,000 unrelated observations for WD 0308-565).
+            inside = [obs for obs in result
+                      if _offset_arcmin(obs, ra, dec) != ""
+                      and float(_offset_arcmin(obs, ra, dec))
+                      <= radius_arcmin + 0.05]
+            if len(inside) < len(result):
+                print(f"[warn] {label}: {len(result) - len(inside)} "
+                      f"result(s) outside {radius_arcmin}′ (or without a "
+                      f"position) dropped")
+            if inside:
+                return inside
             print(f"[warn] {label} returned 0 results, trying next strategy …")
         except Exception as exc:
             print(f"[warn] {label} failed ({exc}), trying next strategy …")

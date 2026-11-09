@@ -189,7 +189,9 @@ on a LOW low-sensitivity patch, source off the region centre, smeared
 (concentration < 0.82), elongated (axis ratio > 1.5), no PSF check or
 trusted pointing during the 2023–24 spacecraft jitter, duplicate exposure.
 For a faint source the field stars' PSF loss is a flag (`psf_broad`;
-`--psf-max-loss` to exclude). The limits were
+`--psf-max-loss` to exclude). Exposures taken after the CALDB stops
+updating the sensitivity-loss correction are flagged `senscorr_frozen`
+(constant stars: V and U about 1.3 % per year low after 2022). The limits were
 calibrated on 3C 273. The table is regenerated, never edited; decisions go
 in `UVOT_output/uvot_overrides.txt`. Lists the exposures whose `include`
 changed since the last run. Output: `UVOT_output/uvot_master_table.txt` and

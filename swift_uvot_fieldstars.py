@@ -36,6 +36,7 @@ import numpy as np
 from swift_uvot_tables import read_table, write_table
 
 GAIA_TAP = 'https://gea.esac.esa.int/tap-server/tap'
+GAIA_RETRIES = 4             # attempts when the archive answers 429/503
 GAIA_FILE = 'uvot_gaia.txt'
 GAIA_RADIUS = 9.0           # arcmin around the target queried (registration
                             # pairs image peaks up to 4' away with stars up to 5' off)
@@ -88,9 +89,22 @@ def _tap_query(query, timeout=300):
     """CSV text of an ADQL query on the ESA Gaia archive (asynchronous TAP:
     the synchronous queue is often full)."""
     import requests
-    r = requests.post(GAIA_TAP + '/async', timeout=60, allow_redirects=False,
-                      data={'REQUEST': 'doQuery', 'LANG': 'ADQL',
-                            'FORMAT': 'csv', 'PHASE': 'RUN', 'QUERY': query})
+    for attempt in range(GAIA_RETRIES):
+        r = requests.post(GAIA_TAP + '/async', timeout=60,
+                          allow_redirects=False,
+                          data={'REQUEST': 'doQuery', 'LANG': 'ADQL',
+                                'FORMAT': 'csv', 'PHASE': 'RUN',
+                                'QUERY': query})
+        if r.status_code not in (429, 503) or attempt == GAIA_RETRIES - 1:
+            break
+        # busy ("too many requests"): wait as asked, or 30, 60, 120 s
+        try:
+            wait = float(r.headers.get('Retry-After', ''))
+        except ValueError:
+            wait = 30.0 * 2 ** attempt
+        print('[info] Gaia archive busy (HTTP %d); retrying in %.0f s'
+              % (r.status_code, wait))
+        time.sleep(min(wait, 300))
     job = r.headers.get('Location')
     if r.status_code not in (200, 303) or not job:
         raise RuntimeError('Gaia archive refused the query (HTTP %d)'

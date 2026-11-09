@@ -183,6 +183,9 @@ This terminal can run:
 "Held constant from" is when the calibration stops changing a filter's
 correction: the fit used data up to 2023-08-01, so observations after those
 years are corrected as if the detector stopped losing sensitivity then.
+Step 6 flags those exposures `senscorr_frozen`; constant stars show V and
+U about 1.3 % per year low after 2022
+([Step 6](06-master-table.md#sensitivity-loss-after-the-calibration-ends)).
 
 The same doctor in a terminal where `ciao` was run:
 

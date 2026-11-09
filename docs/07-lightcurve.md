@@ -135,7 +135,9 @@ a filter together.
 `jitter_ok` (taken during the 2023–24 jitter, PSF check passed),
 `discrepant`, `sss_mid`, `sss_high`, and from the field stars `psf_broad`
 (at least 3 % of the light lost to a broad PSF), `psf_unchecked`,
-`recentred`, `pointing_unsure`; and `scatter`, and `psf_corrected` with
+`recentred`, `pointing_unsure`; `senscorr_frozen` (V and U after 2022
+read about 1.3 % per year low, [Step 6](06-master-table.md#sensitivity-loss-after-the-calibration-ends));
+and `scatter`, and `psf_corrected` with
 `--psf-correct`.
 
 **PSF correction** (`--psf-correct`, off by default). A `psf_broad` point

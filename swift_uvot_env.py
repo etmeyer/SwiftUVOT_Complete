@@ -215,3 +215,43 @@ def default_nproc(most=8):
         return max(1, min(most, len(os.sched_getaffinity(0))))
     except AttributeError:      # not Linux
         return max(1, min(most, os.cpu_count() or 1))
+
+
+SWIFT_MJDREF = 51910.0  # Swift mission time (MET) zero point, 2001-01-01
+
+
+def senscorr_constant_since(caldb=None):
+    """
+    (file name, {filter: 'YYYY-MM-DD'}) from the newest good SENSCORR file
+    in the UVOT caldb.indx: the date from which it holds each filter's
+    sensitivity-loss correction constant (the first row after the last one
+    with a slope). Filters whose correction still has a slope at its last
+    row (extrapolated) are left out. No HEASoft needed.
+    """
+    from astropy.io import fits
+    from astropy.time import Time
+    caldb = caldb or os.environ.get('CALDB') or DEFAULT_HEASOFT_CALDB
+    index = os.path.join(caldb, UVOT_CALDB_INDEX)
+    best = None
+    with fits.open(index) as hdul:
+        for r in hdul[1].data:
+            if r['CAL_CNAM'].strip() == 'SENSCORR' and r['CAL_QUAL'] == 0:
+                key = (r['CAL_VSD'], r['CAL_DATE'], r['CAL_FILE'])
+                if best is None or key > best[0]:
+                    best = (key, os.path.join(caldb, r['CAL_DIR'].strip(),
+                                              r['CAL_FILE'].strip()))
+    if best is None:
+        raise FileNotFoundError('no SENSCORR entry in %s' % index)
+    since = {}
+    with fits.open(best[1]) as hdul:
+        for hdu in hdul[1:]:
+            filt = str(hdu.header.get('FILTER', hdu.name)).strip().upper()
+            rows = sorted(zip(hdu.data['TIME'], hdu.data['SLOPE']))
+            if not rows or rows[-1][1] != 0:
+                continue
+            changing = [t for t, s in rows if s != 0]
+            t0 = rows[0][0] if not changing else \
+                min(t for t, s in rows if t > changing[-1])
+            since[filt] = Time(SWIFT_MJDREF + t0 / 86400.0,
+                               format='mjd').strftime('%Y-%m-%d')
+    return os.path.basename(best[1]), since

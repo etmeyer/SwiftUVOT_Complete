@@ -47,7 +47,10 @@ Flags (noted, not excluding): sss_mid / sss_high (patch at a level the rule
 does not exclude), sss_edge (centre clear, but more than 10 % of the 5"
 circle on a LOW patch), jitter_ok (jitter period, PSF check passed), high_coi
 (U above 0.90 counts per frame: about 8 % low), no_aspcorr, short
-(exposure under 20 s), discrepant (differs from the rest of its
+(exposure under 20 s), senscorr_frozen (taken after the CALDB stops
+updating the sensitivity-loss correction for its filter: V and U read
+about 1.3 % per year low after 2022; see docs/06),
+discrepant (differs from the rest of its
 observation by more than 10 % and 5 sigma), override:N (included by line N,
 despite the rules listed). From the field stars, when the source's own
 shape cannot be measured: psf_broad (the 5" circle loses >= 3 % to a broad
@@ -159,11 +162,13 @@ def matching_override(overrides, row):
     return found
 
 
-def judge(inv, pos, phot, sss_level, limits, psf_max_loss=None):
+def judge(inv, pos, phot, sss_level, limits, psf_max_loss=None,
+          frozen=None):
     """
     (rules, flags) for one exposure; rules empty means include. limits:
     counts-per-frame limit per filter; psf_max_loss: exclude above this
-    field-star PSF loss (None: flag only).
+    field-star PSF loss (None: flag only); frozen: {filter: date} from
+    which the CALDB holds the sensitivity-loss correction constant.
     """
     rules, flags = [], []
     if inv['status'] != 'candidate':
@@ -229,6 +234,9 @@ def judge(inv, pos, phot, sss_level, limits, psf_max_loss=None):
         flags.append('no_aspcorr')
     if _num(inv['exposure']) < SHORT_EXPOSURE:
         flags.append('short')
+    if frozen and inv['filter'] in frozen and \
+            inv['date_mid'][:10] >= frozen[inv['filter']]:
+        flags.append('senscorr_frozen')
     return rules, flags
 
 
@@ -490,6 +498,12 @@ def main(argv=None):
         return 1
     limits = {f: COINCIDENCE_LIMIT.get(f, DEFAULT_COINCIDENCE_LIMIT)
               for f in FILTERS}
+    try:
+        senscorr_file, frozen = uenv.senscorr_constant_since()
+    except Exception as exc:
+        print('[warn] sensitivity-loss calibration not read (%s): no '
+              'senscorr_frozen flags' % exc)
+        senscorr_file, frozen = None, {}
     for item in args.coincidence_limit:
         try:
             filt, value = item.split('=')
@@ -558,7 +572,7 @@ def main(argv=None):
             row.update({k: p.get(k) for k in ('n_stars', 'psf_loss',
                                               'psf_loss_err')})
         rules, flags = judge(inv, p, ph, args.sss_level, limits,
-                             args.psf_max_loss)
+                             args.psf_max_loss, frozen)
         row['_rules'], row['_flags'] = rules, flags
         row['include'] = 'no' if rules else 'yes'
         rows.append(row)
@@ -605,6 +619,12 @@ def main(argv=None):
                              if args.psf_max_loss else 'off (flag only)'),
         'field stars: pnt_offset (arcsec) of the pointing from Gaia; n_stars, '
         'psf_loss(_err): light the 5" circle loses to a broad PSF (Step 4)',
+        'senscorr_frozen: taken after %s holds the sensitivity-loss '
+        'correction constant (%s); constant stars read V and U 1.2-1.4 %% '
+        'per year low after 2022, the UV within 1 %% per year (docs/06)'
+        % (senscorr_file, ', '.join(
+            '%s %s' % (f, frozen[f]) for f in FILTERS if f in frozen))
+        if senscorr_file else 'senscorr_frozen: not checked',
         'overrides: %s (%d line(s))' % (OVERRIDES_FILE, len(overrides)),
         'include: yes/no; rules: the rules that exclude the exposure (if an '
         'override includes it anyway, flags say so)',
