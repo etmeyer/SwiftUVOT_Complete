@@ -326,6 +326,27 @@ def check_gaia():
              "--no-field-stars)" % exc.__class__.__name__)
 
 
+def check_irsa():
+    """Can Step 8 reach the IRSA dust service (Galactic E(B-V))?"""
+    if _ilu.find_spec("requests") is None:
+        emit(WARN, "IRSA dust service: not checked (no requests)")
+        return
+    import requests
+    import swift_uvot_flux as fx
+    try:
+        r = requests.get(fx.IRSA_DUST, params={"locstr": "0 0 gal",
+                                                "regSize": "2.0"}, timeout=20)
+        if r.status_code == 200 and "refPixelValueSandF" in r.text:
+            emit(OK, "IRSA dust service reachable, for Step 8's E(B-V)")
+        else:
+            emit(WARN, "IRSA dust service answered HTTP %d: Step 8 needs it "
+                 "once per analysis (or give --ebv)" % r.status_code)
+    except Exception as exc:
+        emit(WARN, "IRSA dust service not reachable (%s): Step 8 needs it "
+             "once per analysis, then uses its cache (or give --ebv)"
+             % exc.__class__.__name__)
+
+
 def check_disk(data_dir):
     work_root = os.environ.get(WORK_ROOT_ENV) or tempfile.gettempdir()
     places = [("data", data_dir, 20), ("working folders", work_root, 2)]
@@ -457,6 +478,7 @@ def main(argv=None):
     checks = [check_path, check_heasoft, check_heasoft_version, check_caldb,
               check_uvot_caldb, check_senscorr, check_python,
               check_required_pkgs, check_optional_pkgs, check_gaia,
+              check_irsa,
               lambda: check_disk(args.data_dir)]
     if args.test_image:
         checks.append(lambda: check_test_image(args.test_image, args.ra,

@@ -12,9 +12,10 @@ and thresholds checked on real data.
 **Author:** Eileen T. Meyer ([@etmeyer](https://github.com/etmeyer))  
 **License:** MIT
 
-> **Status (October 2026):** Steps 1–7 (setup, download, inventory, positions
-> and regions, photometry, quality rules, light curve) are done; tested on
-> 3C 273. Next: a faint target with non-detections. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
+> **Status (November 2026):** Steps 1–8 (setup, download, inventory, positions
+> and regions, photometry, quality rules, light curve, dereddened flux
+> densities) are done; tested on 3C 273 and on the faint, distant
+> PKS 0537−286. Documentation: <https://etmeyer.github.io/SwiftUVOT_Complete/>,
 > built from [docs/](docs/index.md).
 
 ---
@@ -50,6 +51,7 @@ the good ones into one point per observation and filter.
 | 5 | Photometry of every exposure with `uvotsource` — [docs](docs/05-photometry.md) | `swift_uvot_photometry.py` | done |
 | 6 | Quality rules and overrides → master table — [docs](docs/06-master-table.md) | `make_uvot_master_table.py` | done |
 | 7 | Light curve: combine per observation and filter, plot — [docs](docs/07-lightcurve.md) | `swift_uvot_lightcurve.py` | done |
+| 8 | Flux densities: dereddened, intergalactic absorption, your spectrum — [docs](docs/08-flux.md) | `swift_uvot_flux.py` | done |
 
 Everything runs in **one terminal** with HEASoft set up and CIAO not set up:
 
@@ -64,6 +66,7 @@ swift_uvot_viewer.py                                                    # ... an
 swift_uvot_photometry.py                                                # Step 5: photometry
 make_uvot_master_table.py                                               # Step 6: quality rules
 swift_uvot_lightcurve.py                                                # Step 7: light curve
+swift_uvot_flux.py                                                      # Step 8: dereddened fluxes
 ```
 
 See [docs/01-setup.md](docs/01-setup.md) for installation, the UVOT CALDB, the
@@ -73,7 +76,8 @@ shell setup and what the doctor checks.
 
 Checks the terminal: pipeline on `PATH`, HEASoft (6.30 or newer) without
 CIAO, the UVOT CALDB (every file `uvotsource` uses, its sensitivity-loss
-version, a short enough `$CALDB`), Python packages and free disk. Exits
+version, a short enough `$CALDB`), Python packages, the Gaia archive and the
+IRSA dust service, and free disk. Exits
 non-zero if any check fails.
 
 ```
@@ -217,6 +221,26 @@ loss (`--psf-correct`). Output: `UVOT_output/uvot_lightcurve.txt` and
 ```
 swift_uvot_lightcurve.py [--outdir UVOT_output] [--floor 0.015] [--nsigma 3]
                          [--bkg-sys FILTER=VALUE,...] [--psf-correct]
+```
+
+### `swift_uvot_flux.py`
+
+Turns the light curve's count rates into flux densities corrected for
+Galactic dust and, with `--z`, for the intergalactic medium (Inoue et al.
+2014 or Madau 1995). E(B−V) comes from IRSA (Schlafly & Finkbeiner 2011 by
+default), cached once per analysis. The extinction (Fitzpatrick 1999 or
+Cardelli et al. 1989) and the absorption are folded through each filter's
+CALDB effective area. By default `uvotsource`'s factors are kept;
+`--spectrum` folds a power law, blackbody or your own spectrum for the
+factor too. Rows with strong intergalactic absorption or mostly red-leak
+counts are flagged, not dropped. Needs no HEASoft. Output:
+`UVOT_output/uvot_flux.txt` and `uvot_flux.pdf` (light curves in νF_ν and
+spectral energy distributions).
+
+```
+swift_uvot_flux.py [--outdir UVOT_output] [--ebv E] [--ebv-map sf11|sfd]
+                   [--law f99|ccm89] [--rv 3.1] [--z Z] [--igm inoue14|madau95|none]
+                   [--spectrum powerlaw:ALPHA|blackbody:T|file:PATH]
 ```
 
 ### `swift_uvot_runner.py`, `swift_uvot_env.py`, `swift_uvot_tables.py`
