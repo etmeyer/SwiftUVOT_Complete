@@ -238,7 +238,10 @@ factor too. Rows with strong intergalactic absorption or mostly red-leak
 counts are flagged, not dropped. `--host-ebv` corrects dust in the host
 galaxy too (SMC, LMC, Milky Way or Calzetti law, in the rest frame).
 `--fit-alpha` fits a power law f_ν ∝ ν^−α to each observation's filters
-and converts that observation with it. Needs no HEASoft. Output:
+and converts that observation with it. `flux_sys` gives each flux's
+calibration systematic (zero point, the colour-dependent conversion found
+with stars of known spectra, and the UV filters' red tail; `--cal-sys`).
+Needs no HEASoft. Output:
 `UVOT_output/uvot_flux.txt` and `uvot_flux.pdf` (light curves in νF_ν,
 spectral energy distributions, α against time and brightness), and with
 `--fit-alpha` `uvot_alpha.txt`.
@@ -249,6 +252,7 @@ swift_uvot_flux.py [--outdir UVOT_output] [--ebv E] [--ebv-map sf11|sfd]
                    [--spectrum powerlaw:ALPHA|blackbody:T|file:PATH]
                    [--host-ebv E] [--host-law smc|lmc|mw|calzetti]
                    [--fit-alpha] [--fit-filters V,B,...] [--fit-min-filters 3]
+                   [--cal-sys 0.05|V=0.05,UVW2=0.04,...]
 ```
 
 ### `swift_uvot_runner.py`, `swift_uvot_env.py`, `swift_uvot_tables.py`

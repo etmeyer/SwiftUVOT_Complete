@@ -34,6 +34,7 @@ swift_uvot_flux.py --z 0.158 --fit-alpha             # fit the spectral slope pe
 | `--fit-alpha` | Fit a power law f_ν ∝ ν^−α to each observation's filters and convert that observation with it |
 | `--fit-filters` | Filters the fit may use, e.g. `V,B,UVW1,UVM2,UVW2` (default: all) |
 | `--fit-min-filters` | Fewest detected filters for a fit (default 3; 2 is allowed and flagged) |
+| `--cal-sys` | Calibration systematic of the conversion, a fraction: one number, or e.g. `V=0.03,UVW2=0.08`; `0` leaves only `mag_sys` (default: 0.05 in V, B, U; 0.04 in UVW1, UVM2, UVW2; plus the red-tail term) |
 | `--irsa-timeout` | Seconds to wait for IRSA (default 60) |
 
 ## How it works
@@ -77,6 +78,23 @@ analysis. Its error is 16 %, the SFD map's own, kept as a separate column
 (`a_gal_err`) and not added to the flux errors. Like `mag_sys`, it moves
 every point of a filter together.
 
+**Calibration systematic** (`flux_sys`, a fraction of the flux, not added
+to the flux errors). The check against stars of known spectra (Validation,
+below) shows that the UVOT calibration itself is good to about 5 % for one
+source, depending on its colour. `flux_sys` combines in quadrature:
+
+- Step 7's `mag_sys`: `uvotsource`'s zero-point error (1–3 %);
+- the conversion's own error, `--cal-sys`: 5 % in V, B and U, 4 % in
+  UVW1, UVM2 and UVW2 (default);
+- a **red-tail term** in UVW1 and UVW2: 0.25 and 0.6 × `red_share`. The
+  CALDB correction for the slow loss of sensitivity (SENSCORR) is one
+  factor per filter, measured on hot stars. The red tail of the UV filters
+  seems to have lost little sensitivity, so the correction over-corrects
+  the counts from there, by more every year (Validation). For a power law
+  with α = 1.5 the term is about 4 % in UVW2; for a Sun-like star 40 %.
+
+`--cal-sys 0` leaves `mag_sys` alone (the behaviour before this option).
+
 **Flags** (flag-only, nothing is dropped):
 
 - `igm_absorbed`: the IGM keeps less than 90 % of the counts. Both IGM
@@ -111,8 +129,8 @@ brighter"), and it sets the folding. With `--fit-alpha`, each observation
 1. The model is the power law, times the IGM transmission, the host and
    the Galactic dust, folded through each filter. Its normalisation and α
    are fitted to the measured count rates.
-2. Each filter's error is `rate_err` and its calibration error `mag_sys`
-   combined.
+2. Each filter's error is `rate_err` and its calibration systematic
+   `flux_sys` combined.
 3. That observation's rows (detections and limits) are then converted
    with the fitted α. Observations without a fit keep the default
    conversion.
@@ -120,8 +138,8 @@ brighter"), and it sets the folding. With `--fit-alpha`, each observation
 Rows flagged `igm_absorbed` or `red_leak` are never fitted; `--fit-filters`
 leaves out more. The fits are listed in `uvot_alpha.txt`:
 
-- **Two errors.** `alpha_err` contains `mag_sys`: use it for the absolute
-  α. But `mag_sys` is the same at every epoch, so it does not blur changes
+- **Two errors.** `alpha_err` contains `flux_sys`: use it for the absolute
+  α. But `flux_sys` is (nearly) the same at every epoch, so it does not blur changes
   of α from one observation to the next: for those use `alpha_err_stat`.
 - **Goodness of fit.** `poor_fit` marks fits with p < 0.001; `reason`
   names the filter that deviates most. A power law cannot follow emission
@@ -230,16 +248,29 @@ colour term), not to the folding:
 - It is not the Gaia XP calibration: XP photometry standardised to Landolt
   stars differs from the raw XP spectra by ≤ 1.2 % in B and V, mostly in the
   direction that would widen the gap.
-- The ratios are steady over time (WD 1657+343, 2005–2026).
+- The white dwarf's ratios are steady over time (WD 1657+343, 2005–2026).
+  **The G stars' UV ratios are not:** in UVW2, P041C reads 0.94–0.98 in
+  2009, 1.08–1.10 in 2012 and 1.19–1.26 from 2017 on; P177D 1.01 in 2010
+  and 1.23–1.33 in 2019–20 (UVW1: 0.95–1.00 to 1.03–1.08; UVM2: no
+  trend). At the time of the UV calibration (Breeveld et al. 2011, which
+  used these stars) they agreed. About 75 % of a G star's UVW2 counts come
+  from the filter's red tail (> 2600 Å; a white dwarf's 3 %). A model in
+  which that tail keeps its sensitivity while SENSCORR corrects all counts
+  by the white dwarfs' loss fits the trend (χ² 39 for 52 degrees of
+  freedom, against 151 for a constant per star). This was checked against
+  coincidence loss, background, detector position, exposure times and the
+  stars' own variability; none explains it. Not followed up (the CALDB
+  note lists these two stars among its monitoring stars, yet shows no such
+  drift); the red-tail term of `flux_sys` covers it.
 
 **What this means:** absolute flux densities are good to about ±5 % in V
-and B, depending on the source's colour, and to 3–5 % in U, UVW1 and UVM2.
-In UVW2 a red source may read up to ~20 % high: most of its counts come from
-the filter's red tail (flag `red_leak`). These offsets are in the UVOT
-calibration itself and are larger than `mag_sys` in V and B. For
-`--fit-alpha` they can shift the absolute α. They do not change the changes
-in α from one observation to the next, since they are the same at every
-epoch.
+and B, depending on the source's colour, and to 3–5 % in U, UVW1 and UVM2;
+`flux_sys` carries this. In UVW2 a red source may read 20–30 % high after
+2015 (flag `red_leak` when most counts come from the red tail). For a
+blazar-like power law the UVW2 excess is 2–4 % after 2015 and grows slowly
+with time, so it can mimic a slow brightening of that size. For
+`--fit-alpha` the offsets can shift the absolute α; changes of α between
+observations are affected only through the slow UVW2 drift.
 
 ## Outputs
 
@@ -258,6 +289,7 @@ epoch.
 | `flux_aa`, `flux_aa_err` | intrinsic f_λ at `lam_ref` (erg/s/cm²/Å) |
 | `flux_mjy`, `flux_mjy_err` | the same as f_ν (mJy) |
 | `nufnu`, `nufnu_err` | ν F_ν (erg/s/cm²), for spectral energy distributions |
+| `flux_sys` | calibration systematic of the flux columns, a fraction (not in the errors): `mag_sys`, `--cal-sys` and the red-tail term in quadrature |
 | `mag_dered`, `ab_mag_dered`, `mag_err` | Step 7's Vega and AB magnitudes minus the same correction |
 | `flags`, `reason` | `igm_absorbed`, `red_leak`, and from the fit `poor_fit`, `two_filters`, with the numbers |
 
@@ -272,7 +304,7 @@ A/E(B−V), the IGM transmission, the red-leak share and the factor.
 - the spectral energy distribution of every observation with two or more
   detected filters, coloured by time;
 - with `--fit-alpha`: α against time, and α against the fitted νF_ν at
-  5000 Å (open symbols: flagged; error bars without `mag_sys`).
+  5000 Å (open symbols: flagged; error bars without `flux_sys`).
 
 `UVOT_output/uvot_alpha.txt` (with `--fit-alpha`), one row per fitted
 observation:
@@ -281,7 +313,7 @@ observation:
 | ------ | ------- |
 | `obsid`, `mjd_mid` | observation, mean mid-time of the filters used |
 | `n_filt`, `filters` | the filters fitted |
-| `alpha`, `alpha_err`, `alpha_err_stat` | the slope; its error (Δχ² = 1) with and without `mag_sys` |
+| `alpha`, `alpha_err`, `alpha_err_stat` | the slope; its error (Δχ² = 1) with and without `flux_sys` |
 | `alpha_sys_ebv` | the change of α when the Galactic E(B−V) moves up by its error |
 | `chi2`, `dof`, `p_value` | goodness of fit |
 | `dt_span_h` | hours from the first filter's start to the last filter's end |
@@ -334,11 +366,19 @@ swift_uvot_flux.py --z 0.158 --spectrum file:template.txt
 
 5. **Colour-dependent calibration.** Measured rates of stars with known
    spectra differ from the folded prediction by up to ~6 % in V and B
-   (blue stars low, red stars high) and up to ~20 % in UVW2 for red stars
-   (see Validation). Trust differences between epochs more than absolute
-   fluxes or the absolute α.
+   (blue stars low, red stars high) and by 20–30 % in UVW2 for red stars
+   after 2015 (see Validation). `flux_sys` carries this; add it in
+   quadrature when comparing with other instruments. Trust differences
+   between epochs more than absolute fluxes or the absolute α, except for
+   slow trends of a few % in UVW2.
 
-6. **Re-run after Step 7.** Step 8 reads `uvot_lightcurve.txt`.
+6. **`poor_fit` is rarer with `flux_sys`.** A 5 % systematic per filter
+   absorbs moderate deviations: on 3C 273, U (emission lines, ~15 % above
+   the power law) is still the worst filter in most fits, but only 3 of 239
+   fits are `poor_fit` (with `--cal-sys 0`, over 100). Read `reason`, or
+   leave the filter out with `--fit-filters`.
+
+7. **Re-run after Step 7.** Step 8 reads `uvot_lightcurve.txt`.
 
 ## Notes
 
