@@ -19,7 +19,7 @@ It is the companion to the Swift XRT pipeline
 | [5. Photometry](05-photometry.md) | Run `uvotsource` on every exposure, keeping every number and flag; plot every exposure's rate against time, marked by what Step 6 will judge (`swift_uvot_photometry.py`) |
 | [6. Master table](06-master-table.md) | Apply the quality rules, calibrated on 3C 273, and your overrides; one row per exposure with the rules that excluded it (`make_uvot_master_table.py`) |
 | [7. Light curve](07-lightcurve.md) | Combine the included exposures into one point per observation and filter (weights from expected counts, background systematic): Poisson detection, KBN upper limits, sensitivity and saturated lower limits; magnitudes and flux densities; plot (`swift_uvot_lightcurve.py`) |
-| [8. Flux densities](08-flux.md) | Flux densities corrected for Galactic dust (E(B−V) from IRSA, extinction folded through each filter) and, for a distant source, the intergalactic medium; a spectrum of your choice; spectral energy distributions (`swift_uvot_flux.py`) |
+| [8. Flux densities](08-flux.md) | Flux densities corrected for Galactic dust (E(B−V) from IRSA, extinction folded through each filter) and, for a distant source, the intergalactic medium; optional host-galaxy dust; a spectrum of your choice, or the spectral slope fitted per observation; spectral energy distributions (`swift_uvot_flux.py`) |
 
 A per-exposure light curve (for short-timescale variability) is a planned extension.
 

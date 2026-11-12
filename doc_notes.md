@@ -538,7 +538,8 @@ Logged during **Step 8** (flux densities, dereddened; branch `flux-step8`).
 - **3C 273:** U sits a median 19 % above the B–UVW1 interpolation in νF_ν
   (Mg II and the Balmer continuum in U): an example for `--spectrum file:`.
 - **Not done (later):** the end-to-end check with Gaia XP spectra of field
-  stars (planned validation 3); host-galaxy dust; `--fit-alpha`.
+  stars (planned validation 3); host-galaxy dust; `--fit-alpha` (all done in
+  Step 8b, below).
 
 Logged during the **SENSCORR drift study** (branch `senscorr-frozen`).
 
@@ -569,3 +570,31 @@ Logged during the **SENSCORR drift study** (branch `senscorr-frozen`).
   Step 4: it now retries (30/60/120 s or Retry-After).
 - Fit scripts, star list and run script: `_dev_internal/2026-11-09_senscorr_drift/`
   (not in the repo).
+
+Logged during **Step 8b** (branch `step8b-fit-alpha`: star check, host dust, `--fit-alpha`).
+
+- **User decisions:** one PR, star check first (stop if a filter fails 3 %);
+  host law SMC by default; `--fit-alpha` fits all filters with a `poor_fit`
+  flag (p < 0.001); at least 3 filters; the fitted α re-converts the fluxes.
+- **Star check failed 3 %** (V, B, U, UVW1, UVW2 for some stars). User
+  decision (2026-11-12): document it and proceed, no code change. Pattern:
+  blue stars low, red stars high: hot WDs V 0.945–0.965, B 0.934–0.978;
+  9 Gaia XP field stars V 1.005, B 1.043; G-star standards UVW2 1.16/1.23.
+  Points to the CALDB effective-area shapes (a colour term). Ruled out:
+  folding (Vega CALSPEC vs zero points ≤ 3.2 %), coincidence loss (WD 1657
+  V at 3.7 c/s still 0.965), Gaia XP calibration (JKC_Std vs raw ≤ 1.2 %).
+  Not followed up: published UVOT colour terms (Poole et al. 2008, Breeveld
+  et al. 2011); more blue stars; a per-filter colour correction or larger
+  `mag_sys`. Small rate trend among field stars (brightest lowest by 1–3 %),
+  cf. the open "high_coi U ~8 % low" concern.
+- **Data sources:** Gaia XP via astroquery `load_data(retrieval_type=
+  'XP_CONTINUOUS', data_structure='DATAMODEL_GAIA')`; the old `INDIVIDUAL`/
+  `COMBINED` options fail since archive release 3.15. gaiaxpy `calibrate`,
+  flux × 100 → erg/s/cm²/Å. CALSPEC P041C/P177D STIS starts at 2222 Å:
+  hybrid with the model below, scaled by the band-integrated 2250–2600 Å
+  ratio (1.084, 1.444); a point-wise scale is wrong (model resolves lines).
+- **`--fit-alpha` on 3C 273:** median α 0.22; χ²/dof 7.7 with U, 0.2
+  without (171 of 176 poor fits name U). Folded vs `uvotsource` factors
+  ≤ 3 % for α −0.5 to 2, 8 % in UVW2 at α = 3.
+- Scripts and result tables: `_dev_internal/2026-11-11_step8b/` (not in the
+  repo); smoke tests `_dev_internal/step8_smoke/` (P4, P5, T7, T8).
