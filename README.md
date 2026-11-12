@@ -51,7 +51,7 @@ the good ones into one point per observation and filter.
 | 5 | Photometry of every exposure with `uvotsource` — [docs](docs/05-photometry.md) | `swift_uvot_photometry.py` | done |
 | 6 | Quality rules and overrides → master table — [docs](docs/06-master-table.md) | `make_uvot_master_table.py` | done |
 | 7 | Light curve: combine per observation and filter, plot — [docs](docs/07-lightcurve.md) | `swift_uvot_lightcurve.py` | done |
-| 8 | Flux densities: dereddened, intergalactic absorption, your spectrum — [docs](docs/08-flux.md) | `swift_uvot_flux.py` | done |
+| 8 | Flux densities: dereddened (Galactic and host dust), intergalactic absorption, your spectrum or a fitted power law — [docs](docs/08-flux.md) | `swift_uvot_flux.py` | done |
 
 Everything runs in **one terminal** with HEASoft set up and CIAO not set up:
 
@@ -235,14 +235,20 @@ Cardelli et al. 1989) and the absorption are folded through each filter's
 CALDB effective area. By default `uvotsource`'s factors are kept;
 `--spectrum` folds a power law, blackbody or your own spectrum for the
 factor too. Rows with strong intergalactic absorption or mostly red-leak
-counts are flagged, not dropped. Needs no HEASoft. Output:
-`UVOT_output/uvot_flux.txt` and `uvot_flux.pdf` (light curves in νF_ν and
-spectral energy distributions).
+counts are flagged, not dropped. `--host-ebv` corrects dust in the host
+galaxy too (SMC, LMC, Milky Way or Calzetti law, in the rest frame).
+`--fit-alpha` fits a power law f_ν ∝ ν^−α to each observation's filters
+and converts that observation with it. Needs no HEASoft. Output:
+`UVOT_output/uvot_flux.txt` and `uvot_flux.pdf` (light curves in νF_ν,
+spectral energy distributions, α against time and brightness), and with
+`--fit-alpha` `uvot_alpha.txt`.
 
 ```
 swift_uvot_flux.py [--outdir UVOT_output] [--ebv E] [--ebv-map sf11|sfd]
                    [--law f99|ccm89] [--rv 3.1] [--z Z] [--igm inoue14|madau95|none]
                    [--spectrum powerlaw:ALPHA|blackbody:T|file:PATH]
+                   [--host-ebv E] [--host-law smc|lmc|mw|calzetti]
+                   [--fit-alpha] [--fit-filters V,B,...] [--fit-min-filters 3]
 ```
 
 ### `swift_uvot_runner.py`, `swift_uvot_env.py`, `swift_uvot_tables.py`

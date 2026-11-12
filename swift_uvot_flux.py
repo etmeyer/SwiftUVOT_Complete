@@ -51,20 +51,40 @@ where more than 30 % of the model counts come from beyond the long end of
 the filter's main band (where the effective area falls below 10 % of its
 peak): the measurement mostly tells about longer wavelengths.
 
+Host dust (--host-ebv, default 0): dust in the source's galaxy, applied at
+the rest-frame wavelength inside the same folding: Gordon et al. (2003) SMC
+bar (default; the usual choice for quasars) or LMC average, Fitzpatrick
+(1999) R_V 3.1 (mw), or Calzetti et al. (2000) for star-forming hosts. The
+curves end at 1000 A (Calzetti 1200 A) and are held constant below.
+
+--fit-alpha: for each observation with 3 or more detected filters (not
+flagged igm_absorbed or red_leak; --fit-filters to choose), fit
+f_nu ~ nu^-alpha through the dust, the IGM and the folding to the measured
+rates, each with rate_err and mag_sys combined, and convert that
+observation's rows with the fitted alpha. uvot_alpha.txt holds the fits:
+alpha, its error with and without mag_sys (the latter for changes between
+observations), its shift when E(B-V) moves by its error, chi^2 and p
+(poor_fit below 0.001, naming the worst filter), and the time the filters
+span. Observations without a fit keep the default conversion.
+
 Output (in --outdir):
     uvot_flux.txt    one row per light-curve row: reference wavelength,
                      A_gal, IGM transmission, red-leak share, the factor
                      relative to Step 7's flux, flux densities (erg/s/cm^2/A,
                      mJy, nu F_nu) and dereddened magnitudes; upper limits
                      converted the same way
-    uvot_flux.pdf    dereddened nu F_nu against time per filter, and the
+    uvot_flux.pdf    dereddened nu F_nu against time per filter, the
                      spectral energy distribution of every observation with
-                     two or more filters
+                     two or more filters, and with --fit-alpha alpha against
+                     time and brightness
+    uvot_alpha.txt   with --fit-alpha: one row per fitted observation
 
 Usage:
     swift_uvot_flux.py
     swift_uvot_flux.py --ebv 0.05 --law ccm89
     swift_uvot_flux.py --z 3.104 --spectrum powerlaw:1.5
+    swift_uvot_flux.py --z 0.158 --fit-alpha --fit-filters V,B,UVW1,UVM2,UVW2
+    swift_uvot_flux.py --z 0.5 --host-ebv 0.1 --host-law smc
 """
 
 import argparse
@@ -78,6 +98,7 @@ from datetime import datetime, timezone
 import numpy as np
 from astropy.io import fits
 from scipy.interpolate import CubicSpline
+from scipy.stats import chi2 as chi2_dist
 
 import swift_uvot_env as uenv
 from swift_uvot_tables import read_table, write_table
@@ -95,12 +116,19 @@ DEFAULT_ALPHA = 1.0          # f_nu ~ nu^-1 for the default mode's folding
 IGM_FLAG = 0.9               # transmission below this: igm_absorbed
 RED_FLAG = 0.30              # red-leak share above this: red_leak
 MAIN_BAND = 0.10             # main band: effective area >= 10 % of its peak
+ALPHA_GRID = np.round(np.arange(-3.0, 6.0001, 0.01), 2)   # --fit-alpha range
+FIT_P_MIN = 1e-3             # fit p-value below this: poor_fit
+FIT_MIN_FILTERS = 3
+MAG_TO_REL = 2.5 / math.log(10)
 
 COLUMNS = ['obsid', 'filter', 'date_mid', 'mjd_mid', 'status', 'rate',
-           'rate_err', 'rate_limit', 'lam_ref', 'a_gal', 'a_gal_err', 'igm_trans',
-           'red_share', 'factor', 'flux_aa', 'flux_aa_err', 'flux_mjy',
+           'rate_err', 'rate_limit', 'lam_ref', 'a_gal', 'a_gal_err', 'a_host',
+           'igm_trans', 'red_share', 'alpha', 'alpha_src', 'factor', 'flux_aa', 'flux_aa_err', 'flux_mjy',
            'flux_mjy_err', 'nufnu', 'nufnu_err', 'mag_dered', 'ab_mag_dered',
            'mag_err', 'flags', 'reason']
+ALPHA_COLUMNS = ['obsid', 'mjd_mid', 'n_filt', 'filters', 'alpha', 'alpha_err',
+                 'alpha_err_stat', 'alpha_sys_ebv', 'chi2', 'dof', 'p_value',
+                 'dt_span_h', 'nufnu_5000', 'flags', 'reason']
 
 
 # --- dust laws --------------------------------------------------------------
@@ -167,6 +195,64 @@ def a_over_ebv_ccm89(lam, rv=DEFAULT_RV):
 
 
 LAWS = {'f99': a_over_ebv_f99, 'ccm89': a_over_ebv_ccm89}
+
+
+# --- host-galaxy dust (rest frame) -------------------------------------------
+
+def _gordon03(lam, rv, uv, optnir_lam, optnir_axav):
+    """
+    A(lambda)/E(B-V) of a Gordon et al. (2003) average curve, built the way
+    Fitzpatrick (1999) builds his: the FM90 form (uv = c1, c2, c3, c4, x0,
+    gamma) for x >= 1/0.27 micron^-1, a natural cubic spline through the
+    optical/IR anchors (A/A(V) at optnir_lam, micron) and two UV points
+    below. Held constant shortward of 1000 A, where the curves end. lam in A.
+    """
+    c1, c2, c3, c4, x0, gamma = uv
+    x = np.minimum(1e4 / np.asarray(lam, dtype=float), 10.0)
+
+    def fm(xx):
+        d = xx ** 2 / ((xx ** 2 - x0 ** 2) ** 2 + (xx * gamma) ** 2)
+        y = np.clip(xx - 5.9, 0, None)
+        k = c1 + c2 * xx + c3 * d + c4 * (0.5392 * y ** 2 + 0.05644 * y ** 3)
+        return k / rv + 1.0                            # A/A(V)
+    anchors_x = np.concatenate([[0.0], 1.0 / np.asarray(optnir_lam),
+                                1e4 / np.array([2700.0, 2600.0])])
+    anchors_y = np.concatenate([[0.0], optnir_axav,
+                                fm(1e4 / np.array([2700.0, 2600.0]))])
+    order = np.argsort(anchors_x)
+    spline = CubicSpline(anchors_x[order], anchors_y[order], bc_type='natural')
+    out = spline(x)
+    hi = x >= 1e4 / 2700
+    out[hi] = fm(x[hi])
+    return out * rv
+
+
+def a_over_ebv_smc(lam):
+    """Gordon et al. (2003) SMC bar, R_V 2.74 (smoothed anchors of Gordon
+    et al. 2016, as in the dust_extinction package)."""
+    return _gordon03(lam, 2.74, (-4.959, 2.264, 0.389, 0.461, 4.6, 1.0),
+                     [2.198, 1.65, 1.25, 0.81, 0.65, 0.55, 0.44, 0.37],
+                     [0.11, 0.169, 0.25, 0.567, 0.801, 1.00, 1.374, 1.672])
+
+
+def a_over_ebv_lmc(lam):
+    """Gordon et al. (2003) LMC average, R_V 3.41."""
+    return _gordon03(lam, 3.41, (-0.890, 0.998, 2.719, 0.400, 4.579, 0.934),
+                     [2.198, 1.65, 1.25, 0.55, 0.44, 0.37],
+                     [0.10, 0.186, 0.257, 1.000, 1.293, 1.518])
+
+
+def a_over_ebv_calzetti(lam):
+    """Calzetti et al. (2000) starburst attenuation k(lambda), R_V 4.05
+    (their eq. 4); held constant outside 0.12-2.2 micron."""
+    m = np.clip(np.asarray(lam, dtype=float) / 1e4, 0.12, 2.2)
+    blue = 2.659 * (-2.156 + 1.509 / m - 0.198 / m ** 2 + 0.011 / m ** 3)
+    red = 2.659 * (-1.857 + 1.040 / m)
+    return np.where(m < 0.63, blue, red) + 4.05
+
+
+HOST_LAWS = {'smc': a_over_ebv_smc, 'lmc': a_over_ebv_lmc,
+             'mw': a_over_ebv_f99, 'calzetti': a_over_ebv_calzetti}
 
 
 # --- IGM --------------------------------------------------------------------
@@ -371,32 +457,38 @@ def parse_spectrum(text):
     raise ValueError("give powerlaw:ALPHA, blackbody:T or file:PATH")
 
 
-def fold(ea, shape, z, law, ebv, rv, igm, lam_ref):
+def fold(ea, shape, z, law, ebv, rv, igm, lam_ref, host=None, host_ebv=0.0):
     """
     For one filter and one rest-frame spectrum shape: the counts per unit
-    normalisation with and without the IGM and Galactic dust, the
-    resulting A_gal (mag), IGM transmission, red-leak share, and the
-    intrinsic flux density at lam_ref per unit normalisation.
+    normalisation with and without the IGM, host dust and Galactic dust,
+    the resulting A_gal and A_host (mag), IGM transmission, red-leak share,
+    and the intrinsic flux density at lam_ref per unit normalisation.
     """
     lam, dl, area, _ = ea
     s = shape(lam / (1 + z))
     t = igm(lam, z) if (igm and z > 0) else np.ones_like(lam)
+    h = 10 ** (-0.4 * host(lam / (1 + z)) * host_ebv) \
+        if (host is not None and host_ebv > 0) else np.ones_like(lam)
     ext = 10 ** (-0.4 * law(lam, rv) * ebv) if ebv > 0 else np.ones_like(lam)
     weight = lam / (H_CGS * C_AA) * area * dl     # photons per (f_lambda dlam)
     c_bare = np.sum(s * weight)
     c_igm = np.sum(s * t * weight)
-    c_full = np.sum(s * t * ext * weight)
-    a_gal = -2.5 * math.log10(c_full / c_igm) + 0.0 if c_igm > 0 \
-        else float('nan')    # + 0.0: no '-0.000' when there is no dust
+    c_host = np.sum(s * t * h * weight)
+    c_full = np.sum(s * t * h * ext * weight)
+    # + 0.0: no '-0.000' when there is no dust
+    a_gal = -2.5 * math.log10(c_full / c_host) + 0.0 if c_host > 0 \
+        else float('nan')
+    a_host = -2.5 * math.log10(c_host / c_igm) + 0.0 if c_igm > 0 \
+        else float('nan')
     igm_trans = c_igm / c_bare if c_bare > 0 else float('nan')
     peak = area.max()
     red_edge = lam[area >= MAIN_BAND * peak].max()
-    counts = s * t * ext * weight
+    counts = s * t * h * ext * weight
     red_share = counts[lam > red_edge].sum() / c_full if c_full > 0 \
         else float('nan')
     s_ref = float(shape(np.array([lam_ref / (1 + z)]))[0])
-    return {'c_full': c_full, 'a_gal': a_gal, 'igm_trans': igm_trans,
-            'red_share': red_share, 's_ref': s_ref}
+    return {'c_full': c_full, 'a_gal': a_gal, 'a_host': a_host,
+            'igm_trans': igm_trans, 'red_share': red_share, 's_ref': s_ref}
 
 
 # --- E(B-V) -----------------------------------------------------------------
@@ -490,25 +582,174 @@ def read_lightcurve(path):
 
 
 def filter_terms(filters, areas, factors, shape, z, law, ebv, rv, igm,
-                 use_shape):
-    """Per filter: lam_ref, A_gal, IGM transmission, red-leak share and the
-    factor from count rate to intrinsic f_lambda at lam_ref."""
+                 use_shape, host=None, host_ebv=0.0):
+    """Per filter: lam_ref, A_gal, A_host, IGM transmission, red-leak share
+    and the factor from count rate to intrinsic f_lambda at lam_ref."""
     terms = {}
     for f in filters:
         if f not in areas or f not in factors:
             continue
         fac = factors[f]
-        r = fold(areas[f], shape, z, law, ebv, rv, igm, fac['lam_ref'])
+        r = fold(areas[f], shape, z, law, ebv, rv, igm, fac['lam_ref'],
+                 host, host_ebv)
         if use_shape:
             fcf = r['s_ref'] / r['c_full']    # rate -> intrinsic f_lambda
         else:
-            fcf = fac['fcf_aa'] * 10 ** (0.4 * r['a_gal']) / r['igm_trans']
+            fcf = fac['fcf_aa'] * 10 ** (0.4 * (r['a_gal'] + r['a_host'])) \
+                / r['igm_trans']
         terms[f] = dict(r, lam_ref=fac['lam_ref'], fcf=fcf,
                         factor=fcf / fac['fcf_aa'])
     return terms
 
 
-def convert(row, term, fac, a_err):
+# --- --fit-alpha --------------------------------------------------------------
+
+def alpha_grid_counts(filters, areas, z, law, ebv, rv, igm, host, host_ebv):
+    """
+    {filter: counts per unit normalisation for f_nu ~ nu^-alpha, one value
+    per ALPHA_GRID entry}, the power law normalised to f_lambda = 1 at
+    5000 A in the rest frame, through IGM, host and Galactic dust.
+    """
+    out = {}
+    for f in filters:
+        if f not in areas:
+            continue
+        lam, dl, area, _ = areas[f]
+        t = igm(lam, z) if (igm and z > 0) else np.ones_like(lam)
+        h = 10 ** (-0.4 * host(lam / (1 + z)) * host_ebv) \
+            if (host is not None and host_ebv > 0) else np.ones_like(lam)
+        ext = 10 ** (-0.4 * law(lam, rv) * ebv) if ebv > 0 \
+            else np.ones_like(lam)
+        base = t * h * ext * lam / (H_CGS * C_AA) * area * dl
+        logl = np.log(lam / (1 + z) / 5000.0)
+        out[f] = np.exp(np.outer(ALPHA_GRID - 2, logl)) @ base
+    return out
+
+
+def _chi2_curve(y, sig, model):
+    """Chi^2 against ALPHA_GRID with the normalisation fitted analytically
+    (model: filters x grid); returns chi2 and the normalisations."""
+    w = 1.0 / sig[:, None] ** 2
+    norm = np.sum(model * y[:, None] * w, 0) / np.sum(model ** 2 * w, 0)
+    return np.sum((y[:, None] - norm * model) ** 2 * w, 0), norm
+
+
+def _minimum(chi):
+    """Best alpha (parabola through the grid minimum), the Delta chi^2 = 1
+    half-width (crossings interpolated between grid points), and whether
+    the minimum sits at the edge of the grid."""
+    i = int(np.argmin(chi))
+    step = ALPHA_GRID[1] - ALPHA_GRID[0]
+    edge = i in (0, len(chi) - 1)
+    best, cmin = ALPHA_GRID[i], chi[i]
+    if not edge:
+        c0, c1, c2 = chi[i - 1], chi[i], chi[i + 1]
+        den = c0 - 2 * c1 + c2
+        if den > 0:
+            shift = 0.5 * (c0 - c2) / den
+            best = best + shift * step
+            cmin = c1 - 0.25 * (c0 - c2) * shift
+    level = cmin + 1.0
+
+    def crossing(direction):
+        j = i
+        while 0 <= j + direction < len(chi) and chi[j + direction] < level:
+            j += direction
+        k = j + direction
+        if not 0 <= k < len(chi):
+            return ALPHA_GRID[j]
+        frac = (level - chi[j]) / (chi[k] - chi[j]) if chi[k] != chi[j] \
+            else 0.0
+        return ALPHA_GRID[j] + direction * frac * step
+    return best, 0.5 * (crossing(1) - crossing(-1)), edge
+
+
+def fit_alphas(rows, grids, grids_ebv_hi, eligible, z, min_filters):
+    """
+    One power-law fit per observation: the detected rates of the eligible
+    filters, each with rate_err and mag_sys combined. Returns
+    {obsid: table row (strings) plus '_alpha' (float or None if not usable)}.
+    """
+    by_obs = {}
+    for r in rows:
+        if r.get('status') != 'detected' or (r['obsid'], r['filter']) \
+                not in eligible or r['filter'] not in grids:
+            continue
+        rate, err = _num(r.get('rate')), _num(r.get('rate_err'))
+        if not (rate > 0 and err > 0):
+            continue
+        by_obs.setdefault(r['obsid'], []).append(r)
+    results = {}
+    for obsid, pts in by_obs.items():
+        if len(pts) < min_filters:
+            continue
+        pts.sort(key=lambda r: FILTERS.index(r['filter']))
+        y = np.array([_num(r['rate']) for r in pts])
+        stat = np.array([_num(r['rate_err']) for r in pts])
+        msys = np.array([_num(r.get('mag_sys')) for r in pts])
+        msys = np.where(np.isfinite(msys), msys, 0.0)
+        sig = np.hypot(stat, y * msys / MAG_TO_REL)
+        model = np.array([grids[r['filter']] for r in pts])
+        chi, norm = _chi2_curve(y, sig, model)
+        alpha, err, edge = _minimum(chi)
+        chi_stat, _ = _chi2_curve(y, stat, model)
+        _, err_stat, _ = _minimum(chi_stat)
+        chi_hi, _ = _chi2_curve(y, sig, np.array(
+            [grids_ebv_hi[r['filter']] for r in pts]))
+        alpha_hi, _, _ = _minimum(chi_hi)
+        i = int(np.argmin(chi))
+        dof = len(pts) - 2
+        chi_min = float(chi[i])
+        p = float(chi2_dist.sf(chi_min, dof)) if dof > 0 else float('nan')
+        resid = (y - norm[i] * model[:, i]) / sig
+        worst = int(np.argmax(np.abs(resid)))
+        flags, reasons = [], []
+        if edge:
+            flags.append('alpha_at_edge')
+            reasons.append('best alpha at the end of the range %g..%g; '
+                           'fluxes use the default conversion'
+                           % (ALPHA_GRID[0], ALPHA_GRID[-1]))
+        if dof == 0:
+            flags.append('two_filters')
+            reasons.append('two filters: alpha is exact, the fit cannot be '
+                           'checked')
+        elif p < FIT_P_MIN:
+            flags.append('poor_fit')
+        if dof > 0:
+            reasons.append('worst filter %s: %+.1f sigma (measured/model '
+                           '%.3f)' % (pts[worst]['filter'], resid[worst],
+                                      y[worst] / (norm[i] * model[worst, i])))
+        # intrinsic nu F_nu of the fitted power law at 5000 A observed
+        lam5 = 5000.0
+        nufnu5 = norm[i] * (lam5 / (1 + z) / 5000.0) ** (ALPHA_GRID[i] - 2) \
+            * lam5
+        starts = [_num(r.get('mjd_start')) for r in pts]
+        stops = [_num(r.get('mjd_stop')) for r in pts]
+        span = (np.nanmax(stops) - np.nanmin(starts)) * 24.0 \
+            if np.isfinite(starts).any() and np.isfinite(stops).any() \
+            else float('nan')
+        results[obsid] = {
+            'obsid': obsid,
+            'mjd_mid': '%.5f' % np.mean([_num(r['mjd_mid']) for r in pts]),
+            'n_filt': str(len(pts)),
+            'filters': ','.join(r['filter'] for r in pts),
+            'alpha': '%.3f' % alpha, 'alpha_err': '%.3f' % err,
+            'alpha_err_stat': '%.3f' % err_stat,
+            'alpha_sys_ebv': '%.3f' % abs(alpha_hi - alpha),
+            'chi2': '%.2f' % chi_min, 'dof': str(dof),
+            'p_value': '%.3g' % p if np.isfinite(p) else '-',
+            'dt_span_h': '%.2f' % span if np.isfinite(span) else '-',
+            'nufnu_5000': '%.4e' % nufnu5,
+            'flags': ','.join(flags) if flags else '-',
+            'reason': '; '.join(reasons) if reasons else '-',
+            '_alpha': None if edge else round(float(alpha), 2),
+            '_flags': flags,
+        }
+    return results
+
+
+def convert(row, term, fac, a_err, alpha='-', alpha_src='default',
+            fit_flags=()):
     """Table strings for one light-curve row."""
     out = {k: row.get(k) for k in ('obsid', 'filter', 'date_mid', 'mjd_mid',
                                    'status', 'rate', 'rate_err',
@@ -519,13 +760,15 @@ def convert(row, term, fac, a_err):
         return out
     lam = term['lam_ref']
     out.update(lam_ref='%.0f' % lam, a_gal='%.3f' % term['a_gal'],
-               a_gal_err='%.3f' % a_err, igm_trans='%.3f' % term['igm_trans'],
-               red_share='%.2f' % term['red_share'],
-               factor='%.4f' % term['factor'])
+               a_gal_err='%.3f' % a_err, a_host='%.3f' % term['a_host'],
+               igm_trans='%.3f' % term['igm_trans'],
+               red_share='%.2f' % term['red_share'], alpha=alpha,
+               alpha_src=alpha_src, factor='%.4f' % term['factor'])
     if term['igm_trans'] < IGM_FLAG:
         flags.append('igm_absorbed')
     if term['red_share'] > RED_FLAG:
         flags.append('red_leak')
+    flags.extend(f for f in fit_flags if f != 'alpha_at_edge')
     status = row.get('status')
     value = _num(row.get('rate_limit')) if status == 'upper_limit' \
         else _num(row.get('rate'))
@@ -539,6 +782,11 @@ def convert(row, term, fac, a_err):
     if term['red_share'] > RED_FLAG:
         reasons.append('%.0f %% of the counts from beyond %s\'s main band'
                        % (100 * term['red_share'], row.get('filter')))
+    if 'poor_fit' in fit_flags:
+        reasons.append('the power law fits this observation poorly (p < '
+                       '%g; uvot_alpha.txt)' % FIT_P_MIN)
+    if 'two_filters' in fit_flags:
+        reasons.append('alpha from two filters only')
     if status in ('detected', 'upper_limit', 'lower_limit') and value > 0:
         flam = value * term['fcf']
         fnu_mjy = flam * lam ** 2 / C_AA * 1e26
@@ -565,8 +813,9 @@ def convert(row, term, fac, a_err):
     return out
 
 
-def plot(pdf_path, rows, label):
-    """Dereddened nu F_nu against time per filter, then the SEDs."""
+def plot(pdf_path, rows, label, alpha_rows=()):
+    """Dereddened nu F_nu against time per filter, the SEDs, and the
+    fitted alpha against time and brightness."""
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -637,6 +886,32 @@ def plot(pdf_path, rows, label):
             fig.tight_layout()
             pdf.savefig(fig)
             plt.close(fig)
+        if alpha_rows:
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.5, 9))
+            for sel, mfc in ((lambda a: not a['_flags'], 'k'),
+                             (lambda a: bool(a['_flags']), 'none')):
+                pts = [a for a in alpha_rows if sel(a)]
+                if not pts:
+                    continue
+                t = [_num(a['mjd_mid']) for a in pts]
+                al = [_num(a['alpha']) for a in pts]
+                e = [_num(a['alpha_err_stat']) for a in pts]
+                fl = [_num(a['nufnu_5000']) for a in pts]
+                ax1.errorbar(t, al, yerr=e, fmt='o', ms=3, color='k', mfc=mfc,
+                             lw=0.6)
+                ax2.errorbar(fl, al, yerr=e, fmt='o', ms=3, color='k',
+                             mfc=mfc, lw=0.6)
+            ax1.set_xlabel('MJD')
+            ax1.set_ylabel('alpha (f_nu ~ nu^-alpha)')
+            ax2.set_xscale('log')
+            ax2.set_xlabel('fitted nu F_nu at 5000 A observed (erg/s/cm^2), '
+                           'dereddened')
+            ax2.set_ylabel('alpha')
+            ax1.set_title('%s: fitted alpha per observation (error without '
+                          'mag_sys); open: flagged' % label, fontsize=9)
+            fig.tight_layout()
+            pdf.savefig(fig)
+            plt.close(fig)
 
 
 def main(argv=None):
@@ -671,9 +946,46 @@ def main(argv=None):
                              'blackbody:T or file:PATH (rest-frame A, '
                              'f_lambda); default: keep uvotsource\'s '
                              'factors')
+    parser.add_argument('--host-ebv', type=float, default=0.0,
+                        help='E(B-V) of dust in the host galaxy, applied in '
+                             'the rest frame (default: 0)')
+    parser.add_argument('--host-law', choices=sorted(HOST_LAWS),
+                        default='smc',
+                        help='host dust law: Gordon et al. 2003 SMC bar (smc, '
+                             'default) or LMC average (lmc), Fitzpatrick 1999 '
+                             'R_V 3.1 (mw), Calzetti et al. 2000 (calzetti)')
+    parser.add_argument('--fit-alpha', action='store_true',
+                        help='fit f_nu ~ nu^-alpha per observation to the '
+                             'detected filters and convert that '
+                             'observation with it')
+    parser.add_argument('--fit-filters', default=None,
+                        help='comma-separated filters the fit may use '
+                             '(default: all; rows flagged igm_absorbed or '
+                             'red_leak are always left out)')
+    parser.add_argument('--fit-min-filters', type=int,
+                        default=FIT_MIN_FILTERS,
+                        help='fewest detected filters for a fit (default: '
+                             '3; 2 gives an exact, unchecked alpha, flagged '
+                             'two_filters)')
     parser.add_argument('--irsa-timeout', type=float, default=60,
                         help='seconds to wait for IRSA (default: 60)')
     args = parser.parse_args(argv)
+    if args.host_ebv < 0:
+        print('ERROR: --host-ebv must not be negative', file=sys.stderr)
+        return 1
+    if args.fit_min_filters < 2:
+        print('ERROR: --fit-min-filters must be 2 or more', file=sys.stderr)
+        return 1
+    fit_filters = FILTERS
+    if args.fit_filters:
+        fit_filters = [f.strip().upper() for f in args.fit_filters.split(',')
+                       if f.strip()]
+        bad = [f for f in fit_filters if f not in FILTERS]
+        if bad or len(fit_filters) < args.fit_min_filters:
+            print('ERROR: --fit-filters: give %d or more of %s'
+                  % (args.fit_min_filters, ', '.join(FILTERS)),
+                  file=sys.stderr)
+            return 1
     if args.z < 0 or args.z > 10:
         print('ERROR: --z must be between 0 and 10', file=sys.stderr)
         return 1
@@ -734,17 +1046,55 @@ def main(argv=None):
                        "f_nu ~ nu^-%g" % DEFAULT_ALPHA)
     igm = None if args.igm == 'none' or args.z <= 0 else IGM_MODELS[args.igm]
     law = LAWS[args.law]
+    host = HOST_LAWS[args.host_law] if args.host_ebv > 0 else None
     filters = sorted({r['filter'] for r in rows},
                      key=lambda f: FILTERS.index(f) if f in FILTERS else 99)
     terms = filter_terms(filters, areas, factors, shape, args.z, law, ebv,
-                         args.rv, igm, bool(args.spectrum))
+                         args.rv, igm, bool(args.spectrum), host,
+                         args.host_ebv)
+
+    fits_by_obs = {}
+    if args.fit_alpha:
+        # eligible: filters asked for, and not flagged with the default terms
+        eligible = {(r['obsid'], r['filter']) for r in rows
+                    if r['filter'] in fit_filters and r['filter'] in terms
+                    and terms[r['filter']]['igm_trans'] >= IGM_FLAG
+                    and terms[r['filter']]['red_share'] <= RED_FLAG}
+        grids = alpha_grid_counts(filters, areas, args.z, law, ebv, args.rv,
+                                  igm, host, args.host_ebv)
+        grids_hi = alpha_grid_counts(filters, areas, args.z, law,
+                                     ebv + ebv_err, args.rv, igm, host,
+                                     args.host_ebv)
+        fits_by_obs = fit_alphas(rows, grids, grids_hi, eligible, args.z,
+                                 args.fit_min_filters)
+    alpha_terms = {}
+    given_alpha, given_src = '-', 'uvotsource'
+    if args.spectrum:
+        given_src = 'spectrum'
+        m = re.match(r'\s*powerlaw:\s*([-+\d.eE]+)', args.spectrum)
+        if m:
+            given_alpha = '%g' % float(m.group(1))
 
     out = []
     for r in rows:
         f = r['filter']
         term = terms.get(f)
+        alpha, src, fflags = given_alpha, given_src, ()
+        fit = fits_by_obs.get(r['obsid'])
+        if fit is not None and term is not None:
+            fflags = fit['_flags']
+            if fit['_alpha'] is not None:
+                a = fit['_alpha']
+                if a not in alpha_terms:
+                    sh, _ = parse_spectrum('powerlaw:%g' % a)
+                    alpha_terms[a] = filter_terms(
+                        filters, areas, factors, sh, args.z, law, ebv,
+                        args.rv, igm, True, host, args.host_ebv)
+                term = alpha_terms[a].get(f, term)
+                alpha, src = fit['alpha'], 'fit'
         a_err = term['a_gal'] / ebv * ebv_err if (term and ebv > 0) else 0.0
-        out.append(convert(r, term, factors.get(f), a_err))
+        out.append(convert(r, term, factors.get(f), a_err, alpha, src,
+                           fflags))
 
     prov = uenv.provenance()
     label = 'RA %.5f Dec %.5f' % radec if radec else '?'
@@ -760,12 +1110,21 @@ def main(argv=None):
         'spectrum: %s' % shape_label,
         'IGM: %s' % ('none' if igm is None else '%s at z = %g'
                      % (args.igm, args.z)),
+        'host dust: %s' % ('none' if host is None else
+                           'E(B-V) = %.4f mag, law %s, rest frame (z = %g)'
+                           % (args.host_ebv, args.host_law, args.z)),
+        'alpha (f_nu ~ nu^-alpha): %s' % (
+            'fitted per observation (--fit-alpha, %d+ detected filters of '
+            '%s; uvot_alpha.txt); alpha_src fit, else the default above'
+            % (args.fit_min_filters, ','.join(fit_filters))
+            if args.fit_alpha else 'not fitted'),
         'lam_ref (A): wavelength of uvotsource\'s factors; flux_aa '
         '(erg/s/cm^2/A), flux_mjy (mJy), nufnu (erg/s/cm^2): intrinsic '
-        'spectrum at lam_ref, without Galactic dust and IGM',
+        'spectrum at lam_ref, without Galactic dust, host dust and IGM',
         'factor: flux_aa / Step 7 flux_aa; a_gal (mag): folded Galactic '
         'extinction, a_gal_err its systematic error (not in the flux '
-        'errors); igm_trans: folded IGM transmission of the counts',
+        'errors); a_host (mag): folded host-galaxy extinction; igm_trans: '
+        'folded IGM transmission of the counts',
         'red_share: share of the model counts from beyond the filter\'s main '
         'band (effective area >= %g %% of peak); flags igm_absorbed '
         '(igm_trans < %g), red_leak (red_share > %g)'
@@ -773,6 +1132,9 @@ def main(argv=None):
         'mag_dered, ab_mag_dered: Step 7 magnitudes minus the same correction; '
         'upper_limit rows: flux and magnitude columns hold the limit',
     ]
+    if args.fit_alpha:
+        comments.append('per-filter values below: for the default spectrum; '
+                        'rows with alpha_src fit have their own')
     for f in filters:
         if f in terms:
             t = terms[f]
@@ -784,8 +1146,29 @@ def main(argv=None):
                    t['igm_trans'], t['red_share'], t['factor']))
     flux_path = os.path.join(args.outdir, 'uvot_flux.txt')
     write_table(flux_path, out, COLUMNS, comments)
+    alpha_rows = sorted(fits_by_obs.values(), key=lambda a: _num(a['mjd_mid']))
+    alpha_path = None
+    if args.fit_alpha:
+        alpha_path = os.path.join(args.outdir, 'uvot_alpha.txt')
+        write_table(alpha_path, alpha_rows, ALPHA_COLUMNS, comments[:10] + [
+            'one row per observation with %d+ detected filters among %s, '
+            'none flagged igm_absorbed or red_leak'
+            % (args.fit_min_filters, ','.join(fit_filters)),
+            'model: f_nu ~ nu^-alpha (rest frame) through IGM, host and '
+            'Galactic dust, folded through each filter; normalisation fitted',
+            'errors per filter: rate_err and mag_sys combined; alpha_err: '
+            'Delta chi^2 = 1; alpha_err_stat: the same with rate_err only '
+            '(for changes of alpha between observations)',
+            'alpha_sys_ebv: change of alpha when Galactic E(B-V) moves up by '
+            'its error; dt_span_h: first start to last stop of the filters '
+            'used (hours)',
+            'nufnu_5000: the fitted intrinsic nu F_nu at 5000 A observed '
+            '(erg/s/cm^2)',
+            'flags: poor_fit (p < %g), two_filters, alpha_at_edge (alpha '
+            'outside %g..%g; not used for the fluxes)'
+            % (FIT_P_MIN, ALPHA_GRID[0], ALPHA_GRID[-1])])
     pdf_path = os.path.join(args.outdir, 'uvot_flux.pdf')
-    plot(pdf_path, out, label)
+    plot(pdf_path, out, label, alpha_rows)
 
     print('[info] source %s; E(B-V) %.4f +- %.4f (%s)'
           % (label, ebv, ebv_err, ebv_src))
@@ -806,7 +1189,20 @@ def main(argv=None):
               '%7d' % (f, t['lam_ref'], t['a_gal'],
                        '%.2f' % (t['a_gal'] / ebv) if ebv > 0 else '-',
                        t['igm_trans'], t['red_share'], t['factor'], n, nf))
-    print('[summary] Written: %s, %s' % (flux_path, pdf_path))
+    if args.fit_alpha:
+        good = [a for a in alpha_rows if a['_alpha'] is not None]
+        av = np.array([_num(a['alpha']) for a in good])
+        npoor = sum('poor_fit' in a['_flags'] for a in alpha_rows)
+        if len(av):
+            print('[summary] alpha fits: %d observations (%d used for the '
+                  'fluxes); median alpha %.2f (16-84 %%: %.2f..%.2f); '
+                  'poor_fit %d' % (len(alpha_rows), len(good), np.median(av),
+                                   *np.percentile(av, [16, 84]), npoor))
+        else:
+            print('[summary] alpha fits: none (no observation with %d+ '
+                  'eligible detected filters)' % args.fit_min_filters)
+    print('[summary] Written: %s, %s%s' % (
+        flux_path, pdf_path, ', ' + alpha_path if alpha_path else ''))
     return 0
 
 
