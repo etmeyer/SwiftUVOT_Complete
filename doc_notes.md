@@ -598,3 +598,46 @@ Logged during **Step 8b** (branch `step8b-fit-alpha`: star check, host dust, `--
   ≤ 3 % for α −0.5 to 2, 8 % in UVW2 at α = 3.
 - Scripts and result tables: `_dev_internal/2026-11-11_step8b/` (not in the
   repo); smoke tests `_dev_internal/step8_smoke/` (P4, P5, T7, T8).
+
+Logged during the **Step 8 colour term** follow-up (branch `flux-cal-sys`:
+`flux_sys`, `--cal-sys`).
+
+- **User decision (2026-11-12):** no further research; larger systematics
+  instead; the colour term is tabled for later.
+- **Literature:** V/B/U effective areas (Poole et al. 2008) are the ground
+  curves times one in-orbit ratio per filter, calibrated with Landolt stars
+  matched to Pickles spectra plus 1–2 white dwarfs; recommended zero-point
+  errors 1.3/1.6/2.0 %. UV curves (Breeveld et al. 2011, CALDB 2010-11, still
+  current) were re-fitted at the red end with P041C, P177D, P330E. No later
+  shape recalibration found. SENSCORR (note 15-07): one factor per filter;
+  UVW2 loss 4.2 % (2010), 19.6 % (2015), 27.4 % (2020).
+- **Finding: the G-star UV excess grows with time.** UVW2: P041C 0.94–0.98
+  (2009) → 1.24 (2021), +1.37 ± 0.27 %/yr; P177D 1.01 (2010) → 1.30 (2020),
+  +2.83 ± 0.35 %/yr; WD 1657+343 flat (−0.08 ± 0.05). UVW1 weaker (+0.35,
+  +0.74 %/yr); UVM2 none. Model ratio = s·[(1−q) + q·C_f(t)/C_red(t)] with q
+  the red-tail share (> 2600 Å; G star 0.75, WD 0.03), C_f SENSCORR, C_red = 1
+  (tail keeps its sensitivity), one s per star: χ² 39.1/52 vs 150.5/52
+  constant, 56.4/52 tail declining like B; γ (C_red = C_f^γ) = −0.01 ± 0.09
+  at 2600 Å, −0.40 ± 0.12 at 3000 Å (the non-declining part starts at
+  ≤ 2600 Å). Ruled out by an independent cross-check: SENSCORR
+  implementation (matches uvotsource), frame time, coincidence loss
+  (1.007–1.03), background, detector position / LSS, exposure keywords,
+  stellar variability (U and UVM2 flat). Raw UVW2 rates of two Gaia field
+  stars, late vs early: 0.88, 0.98 vs 0.76 implied by SENSCORR.
+- **Open (tabled):** SENSCORR note 15-07 lists P177D (u, uvw1, uvm2, uvw2)
+  and P041C (uvw1, uvm2, uvw2) as monitoring stars, yet its UVW2 figure
+  shows no such drift: dropped, or different photometry? (A help-desk
+  question.) Physical cause unknown: U/B/V lose 11–17 % at red-tail
+  wavelengths. Optical: Gaia XP vs CALSPEC for the three WDs, V 0.989–1.003,
+  B 0.980–0.999, so the spectrum source explains ≤ 1–2 % of the WD vs field
+  star gap; detector position not tested; Huang et al. 2024 XP corrections
+  not applied.
+- **What was built:** `flux_sys` = hypot(mag_sys, cal_sys, RED_TAIL_SYS ×
+  red_share); cal_sys 5 % V/B/U, 4 % UV (star-check spread); red-tail
+  factors UVW2 0.6, UVW1 0.25 (UVW2: red_share ≈ 0.7 q, bias ≈ q (C_f − 1) ≈
+  0.42 q in 2025 → 0.6 × red_share; UVW1 weaker). `--fit-alpha` uses
+  flux_sys instead of mag_sys: on 3C 273 poor_fit drops from > 100 to 3 of
+  239 fits; U is still the worst filter in 185 (median measured/model 1.14).
+- Research scripts, figure (`redtail_vs_time.png`), cross-check and plan:
+  `_dev_internal/2026-11-12_colour_term/` (not in the repo); smoke test T9 and
+  updated T8 in `_dev_internal/step8_smoke/` (26/26).

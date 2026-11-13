@@ -60,12 +60,19 @@ curves end at 1000 A (Calzetti 1200 A) and are held constant below.
 --fit-alpha: for each observation with 3 or more detected filters (not
 flagged igm_absorbed or red_leak; --fit-filters to choose), fit
 f_nu ~ nu^-alpha through the dust, the IGM and the folding to the measured
-rates, each with rate_err and mag_sys combined, and convert that
+rates, each with rate_err and flux_sys combined, and convert that
 observation's rows with the fitted alpha. uvot_alpha.txt holds the fits:
-alpha, its error with and without mag_sys (the latter for changes between
+alpha, its error with and without flux_sys (the latter for changes between
 observations), its shift when E(B-V) moves by its error, chi^2 and p
 (poor_fit below 0.001, naming the worst filter), and the time the filters
 span. Observations without a fit keep the default conversion.
+
+flux_sys: the flux columns' calibration systematic (a fraction, not in the
+errors): Step 7's mag_sys (uvotsource's zero-point error), the conversion's
+own (--cal-sys; default 5 % in V, B, U and 4 % in the UV, from the star
+check of known spectra) and, in UVW1 and UVW2, 0.25 and 0.6 x red_share
+(the CALDB sensitivity-loss correction over-corrects the counts from the
+filters' red tails), in quadrature.
 
 Output (in --outdir):
     uvot_flux.txt    one row per light-curve row: reference wavelength,
@@ -120,12 +127,22 @@ ALPHA_GRID = np.round(np.arange(-3.0, 6.0001, 0.01), 2)   # --fit-alpha range
 FIT_P_MIN = 1e-3             # fit p-value below this: poor_fit
 FIT_MIN_FILTERS = 3
 MAG_TO_REL = 2.5 / math.log(10)
+# Calibration systematic of the flux conversion (fraction), from the Step 8b
+# star check: hot white dwarfs read 3.5-6.5 % low in V and B, Gaia XP field
+# stars up to 6 % high in B; U 5 %; UV 2-5 % (doc_notes.md, Step 8 colour
+# term). Added in quadrature to Step 7's mag_sys into flux_sys.
+CAL_SYS = {'V': 0.05, 'B': 0.05, 'U': 0.05, 'UVW1': 0.04, 'UVM2': 0.04,
+           'UVW2': 0.04}
+# Red-tail term, times red_share: SENSCORR over-corrects the counts from the
+# UV filters' red tails (solar-type stars read up to ~30 % high in UVW2 after
+# 2015, ~1.00 in 2009-10; weaker in UVW1, none in UVM2).
+RED_TAIL_SYS = {'UVW1': 0.25, 'UVW2': 0.6}
 
 COLUMNS = ['obsid', 'filter', 'date_mid', 'mjd_mid', 'status', 'rate',
            'rate_err', 'rate_limit', 'lam_ref', 'a_gal', 'a_gal_err', 'a_host',
            'igm_trans', 'red_share', 'alpha', 'alpha_src', 'factor', 'flux_aa', 'flux_aa_err', 'flux_mjy',
-           'flux_mjy_err', 'nufnu', 'nufnu_err', 'mag_dered', 'ab_mag_dered',
-           'mag_err', 'flags', 'reason']
+           'flux_mjy_err', 'nufnu', 'nufnu_err', 'flux_sys', 'mag_dered',
+           'ab_mag_dered', 'mag_err', 'flags', 'reason']
 ALPHA_COLUMNS = ['obsid', 'mjd_mid', 'n_filt', 'filters', 'alpha', 'alpha_err',
                  'alpha_err_stat', 'alpha_sys_ebv', 'chi2', 'dof', 'p_value',
                  'dt_span_h', 'nufnu_5000', 'flags', 'reason']
@@ -602,6 +619,17 @@ def filter_terms(filters, areas, factors, shape, z, law, ebv, rv, igm,
     return terms
 
 
+def flux_sys(filt, mag_sys, red_share, cal_sys):
+    """Relative calibration systematic of a filter's flux: Step 7's
+    mag_sys (zero point), the conversion's cal_sys and the red-tail term
+    (RED_TAIL_SYS x red_share) in quadrature. 0 cal_sys drops the latter two."""
+    zp = mag_sys / MAG_TO_REL if np.isfinite(mag_sys) else 0.0
+    cal = cal_sys.get(filt, 0.0)
+    red = RED_TAIL_SYS.get(filt, 0.0) * red_share \
+        if (cal > 0 and np.isfinite(red_share)) else 0.0
+    return float(np.sqrt(zp ** 2 + cal ** 2 + red ** 2))
+
+
 # --- --fit-alpha --------------------------------------------------------------
 
 def alpha_grid_counts(filters, areas, z, law, ebv, rv, igm, host, host_ebv):
@@ -664,12 +692,17 @@ def _minimum(chi):
     return best, 0.5 * (crossing(1) - crossing(-1)), edge
 
 
-def fit_alphas(rows, grids, grids_ebv_hi, eligible, z, min_filters):
+def fit_alphas(rows, grids, grids_ebv_hi, eligible, z, min_filters,
+               sys_of=None):
     """
     One power-law fit per observation: the detected rates of the eligible
-    filters, each with rate_err and mag_sys combined. Returns
+    filters, each with rate_err and its flux_sys (sys_of(row), a fraction;
+    default mag_sys alone) combined. Returns
     {obsid: table row (strings) plus '_alpha' (float or None if not usable)}.
     """
+    if sys_of is None:
+        def sys_of(r):
+            return flux_sys(r['filter'], _num(r.get('mag_sys')), 0.0, {})
     by_obs = {}
     for r in rows:
         if r.get('status') != 'detected' or (r['obsid'], r['filter']) \
@@ -686,9 +719,8 @@ def fit_alphas(rows, grids, grids_ebv_hi, eligible, z, min_filters):
         pts.sort(key=lambda r: FILTERS.index(r['filter']))
         y = np.array([_num(r['rate']) for r in pts])
         stat = np.array([_num(r['rate_err']) for r in pts])
-        msys = np.array([_num(r.get('mag_sys')) for r in pts])
-        msys = np.where(np.isfinite(msys), msys, 0.0)
-        sig = np.hypot(stat, y * msys / MAG_TO_REL)
+        fsys = np.array([sys_of(r) for r in pts])
+        sig = np.hypot(stat, y * fsys)
         model = np.array([grids[r['filter']] for r in pts])
         chi, norm = _chi2_curve(y, sig, model)
         alpha, err, edge = _minimum(chi)
@@ -749,7 +781,7 @@ def fit_alphas(rows, grids, grids_ebv_hi, eligible, z, min_filters):
 
 
 def convert(row, term, fac, a_err, alpha='-', alpha_src='default',
-            fit_flags=()):
+            fit_flags=(), cal_sys=None):
     """Table strings for one light-curve row."""
     out = {k: row.get(k) for k in ('obsid', 'filter', 'date_mid', 'mjd_mid',
                                    'status', 'rate', 'rate_err',
@@ -763,7 +795,11 @@ def convert(row, term, fac, a_err, alpha='-', alpha_src='default',
                a_gal_err='%.3f' % a_err, a_host='%.3f' % term['a_host'],
                igm_trans='%.3f' % term['igm_trans'],
                red_share='%.2f' % term['red_share'], alpha=alpha,
-               alpha_src=alpha_src, factor='%.4f' % term['factor'])
+               alpha_src=alpha_src, factor='%.4f' % term['factor'],
+               flux_sys='%.3f' % flux_sys(row.get('filter'),
+                                          _num(row.get('mag_sys')),
+                                          term['red_share'],
+                                          cal_sys or {}))
     if term['igm_trans'] < IGM_FLAG:
         flags.append('igm_absorbed')
     if term['red_share'] > RED_FLAG:
@@ -908,7 +944,7 @@ def plot(pdf_path, rows, label, alpha_rows=()):
                            'dereddened')
             ax2.set_ylabel('alpha')
             ax1.set_title('%s: fitted alpha per observation (error without '
-                          'mag_sys); open: flagged' % label, fontsize=9)
+                          'flux_sys); open: flagged' % label, fontsize=9)
             fig.tight_layout()
             pdf.savefig(fig)
             plt.close(fig)
@@ -967,6 +1003,15 @@ def main(argv=None):
                         help='fewest detected filters for a fit (default: '
                              '3; 2 gives an exact, unchecked alpha, flagged '
                              'two_filters)')
+    parser.add_argument('--cal-sys', default=None, metavar='VALUES',
+                        help='calibration systematic of the conversion, a '
+                             'fraction: one number for all filters, or e.g. '
+                             'V=0.03,UVW2=0.08; 0 leaves only mag_sys '
+                             '(default: %s, plus %s x red_share)'
+                             % (','.join('%s=%g' % kv for kv in
+                                         CAL_SYS.items()),
+                                ','.join('%s %g' % kv for kv in
+                                         RED_TAIL_SYS.items())))
     parser.add_argument('--irsa-timeout', type=float, default=60,
                         help='seconds to wait for IRSA (default: 60)')
     args = parser.parse_args(argv)
@@ -985,6 +1030,25 @@ def main(argv=None):
             print('ERROR: --fit-filters: give %d or more of %s'
                   % (args.fit_min_filters, ', '.join(FILTERS)),
                   file=sys.stderr)
+            return 1
+    cal_sys = dict(CAL_SYS)
+    if args.cal_sys:
+        try:
+            if '=' in args.cal_sys:
+                for item in args.cal_sys.split(','):
+                    f, v = item.split('=')
+                    if f.strip().upper() not in FILTERS:
+                        raise ValueError(f)
+                    cal_sys[f.strip().upper()] = float(v)
+            else:
+                cal_sys = {f: float(args.cal_sys) for f in CAL_SYS}
+        except ValueError:
+            print('ERROR: --cal-sys %s: give a number or FILTER=VALUE pairs '
+                  '(filters %s)' % (args.cal_sys, ', '.join(FILTERS)),
+                  file=sys.stderr)
+            return 1
+        if any(v < 0 for v in cal_sys.values()):
+            print('ERROR: --cal-sys must not be negative', file=sys.stderr)
             return 1
     if args.z < 0 or args.z > 10:
         print('ERROR: --z must be between 0 and 10', file=sys.stderr)
@@ -1065,8 +1129,11 @@ def main(argv=None):
         grids_hi = alpha_grid_counts(filters, areas, args.z, law,
                                      ebv + ebv_err, args.rv, igm, host,
                                      args.host_ebv)
+        def sys_of(r):
+            return flux_sys(r['filter'], _num(r.get('mag_sys')),
+                            terms[r['filter']]['red_share'], cal_sys)
         fits_by_obs = fit_alphas(rows, grids, grids_hi, eligible, args.z,
-                                 args.fit_min_filters)
+                                 args.fit_min_filters, sys_of)
     alpha_terms = {}
     given_alpha, given_src = '-', 'uvotsource'
     if args.spectrum:
@@ -1094,7 +1161,7 @@ def main(argv=None):
                 alpha, src = fit['alpha'], 'fit'
         a_err = term['a_gal'] / ebv * ebv_err if (term and ebv > 0) else 0.0
         out.append(convert(r, term, factors.get(f), a_err, alpha, src,
-                           fflags))
+                           fflags, cal_sys))
 
     prov = uenv.provenance()
     label = 'RA %.5f Dec %.5f' % radec if radec else '?'
@@ -1129,6 +1196,12 @@ def main(argv=None):
         'band (effective area >= %g %% of peak); flags igm_absorbed '
         '(igm_trans < %g), red_leak (red_share > %g)'
         % (100 * MAIN_BAND, IGM_FLAG, RED_FLAG),
+        'flux_sys: relative calibration systematic of the flux columns (not '
+        'in the errors): Step 7 mag_sys, the conversion (--cal-sys: %s) and '
+        '%s x red_share in quadrature'
+        % (','.join('%s=%g' % kv for kv in cal_sys.items()),
+           ','.join('%s %g' % kv for kv in RED_TAIL_SYS.items())
+           if any(cal_sys.values()) else 'no red-tail term'),
         'mag_dered, ab_mag_dered: Step 7 magnitudes minus the same correction; '
         'upper_limit rows: flux and magnitude columns hold the limit',
     ]
@@ -1156,7 +1229,7 @@ def main(argv=None):
             % (args.fit_min_filters, ','.join(fit_filters)),
             'model: f_nu ~ nu^-alpha (rest frame) through IGM, host and '
             'Galactic dust, folded through each filter; normalisation fitted',
-            'errors per filter: rate_err and mag_sys combined; alpha_err: '
+            'errors per filter: rate_err and flux_sys combined; alpha_err: '
             'Delta chi^2 = 1; alpha_err_stat: the same with rate_err only '
             '(for changes of alpha between observations)',
             'alpha_sys_ebv: change of alpha when Galactic E(B-V) moves up by '
