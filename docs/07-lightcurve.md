@@ -17,7 +17,7 @@ swift_uvot_lightcurve.py
 | `--outdir` | Steps 3–6's output folder (default `UVOT_output`) |
 | `--floor` | Systematic error per exposure, as a fraction of the combined rate (default 0.015) |
 | `--nsigma` | Detection threshold in Gaussian σ; also sets the upper-limit confidence (3 → 99.87 %) and the sensitivity (default 3; 1–8) |
-| `--psf-correct` | Divide each exposure whose own shape was not measured by the light its field stars say the 5″ circle kept (1 − `psf_loss`, Step 4), adding an error of 0.4 × the loss (default: off) |
+| `--psf-correct` | Divide each exposure whose own shape was not measured (not `extended` ones, Step 6) by the light its field stars say the 5″ circle kept (1 − `psf_loss`, Step 4), adding an error of 0.4 × the loss (default: off) |
 | `--bkg-sys` | Additive background systematic, as a fraction of the background in the aperture: one number for all filters, or e.g. `V=0.01,UVM2=0.05`; `0` switches it off (default: measured per filter, below) |
 
 ## How it works

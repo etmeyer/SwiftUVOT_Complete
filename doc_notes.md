@@ -641,3 +641,34 @@ Logged during the **Step 8 colour term** follow-up (branch `flux-cal-sys`:
 - Research scripts, figure (`redtail_vs_time.png`), cross-check and plan:
   `_dev_internal/2026-11-12_colour_term/` (not in the repo); smoke test T9 and
   updated T8 in `_dev_internal/step8_smoke/` (26/26).
+
+## Step 6: `--extended` for host galaxies (3C 120, 2026-11-19)
+
+- **Why:** before handing the pipeline to a colleague for 3C 120, a
+  5-observation test (00036369001, 00091444002, 00037594036, 00095727016,
+  00037594076; 2007–2025; 57 exposures) ran Steps 2–8 cleanly but Step 6
+  excluded all 10 V and all 5 B exposures as `smeared`.
+- **Diagnosis:** 3C 120's concentration (5″/15″) V 0.68–0.78, B 0.74–0.78,
+  U 0.84–0.88, UV 0.85–0.90; the same exposures' field stars normal
+  (`star_conc` 0.94–1.02 relative; 00091444002 V 0.83) and 3C 120
+  round (axis ratio 1.01–1.14). V at 0.78 in 2025, when V was 13.84 against
+  14.4–14.6 earlier: the concentration follows the nucleus/host ratio, so a
+  per-filter limit would be arbitrary.
+- **Background checked:** radial profile (median over 8 sectors of
+  per-sector means, 80–150″ as sky; `_dev_internal/2026-11-19_extended/
+  profile.py`): 27.5–35″ annulus above sky by 3.3 % (V), 1.7 % (B), 1.0 %
+  (U), 5–7 % (UV, PSF wings, which the point-source calibration includes).
+  As a share of the net 5″ rate: V 1.1 %, B 0.6 %, others ≤ 0.3 %. No change
+  needed.
+- **Built:** `--extended FILTER,...` in `make_uvot_master_table.py`: the
+  source's concentration is treated as unmeasured in those filters, so the
+  existing faint-source path applies (field-star `psf_loss` → `psf_broad`,
+  `psf_unchecked`, `psf` rule with `--psf-max-loss`, jitter PSF check); the
+  axis-ratio rule stays; rows flagged `extended`; drawn as crosses in the
+  PDF's concentration panel. Step 7's `--psf-correct` skips them (conc is
+  measured). Not done: host starlight subtraction (left to the user).
+- **Result on the test:** with `--extended V,B` all 15 come back (2 flagged
+  `psf_broad`: 00037594036 V 5.8 %, 00091444002 V 17 %); V/B
+  per-observation χ²_red 0.14–0.58.
+- **Regression:** without the option the master tables of 3c273_full and
+  pks0537_full are identical to main's (byte-for-byte rows).

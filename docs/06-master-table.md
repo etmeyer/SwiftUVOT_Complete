@@ -22,6 +22,7 @@ make_uvot_master_table.py
 | `--sss-level` | Exclude exposures on a low-sensitivity patch at this level or a stricter one: `LOW` (default), `MID` or `HIGH` |
 | `--coincidence-limit FILTER=VALUE` | Change a filter's counts-per-frame limit (default 0.95; U only at the saturation cap, 0.98); can be repeated |
 | `--psf-max-loss FRACTION` | Exclude (rule `psf`) exposures whose field stars show a larger loss of the 5″ circle, when the source's own shape cannot be measured (default: off, flag only) |
+| `--extended FILTER[,FILTER...]` | Filters in which the source is extended, e.g. by a host galaxy (`V,B` for 3C 120): the `smeared` rule is not applied there and the field stars judge the PSF instead ([below](#extended-sources-host-galaxies)); default none |
 
 ## How it works
 
@@ -36,7 +37,7 @@ come from the 3C 273 data, as described below.
 | `coincidence` | above 0.95 counts per frame (U: not used, see `high_coi`) | the coincidence-loss correction goes wrong below the cap: UVW2 above 0.95 reads 13–39 % high |
 | `sss` | on a low-sensitivity patch at `--sss-level` (LOW) | rates 5 % low on average, 29 % of them more than 10 % low |
 | `off_centre` | source found more than 3″ from the region centre, so Step 4 left the region at `--ra`/`--dec` | the region misses the source: rates 0.30 of the truth |
-| `smeared` | concentration (5″/15″ counts, Step 4) below 0.82; not applied to saturated exposures, whose flattened cores read 0.80–0.81 and whose rates are lower limits anyway | light outside the 5″ region: clean exposures are at 0.84 and above (95 %); the two below 0.82 read 5 % and 16 % low |
+| `smeared` | concentration (5″/15″ counts, Step 4) below 0.82; not applied in the `--extended` filters, nor to saturated exposures, whose flattened cores read 0.80–0.81 and whose rates are lower limits anyway | light outside the 5″ region: clean exposures are at 0.84 and above (95 %); the two below 0.82 read 5 % and 16 % low |
 | `elongated` | axis ratio above 1.5 | trailed: 5–12 % low |
 | `psf` | only with `--psf-max-loss`: the source's own shape is not measurable and the field stars show a larger loss | your choice of how much loss to accept |
 | `jitter` | taken during the spacecraft jitter (7 August 2023 – 4 April 2024) without a PSF check (the source's own shape, or the field stars') or without a pointing it can trust (aspect correction, the source's centroid, or the field stars) | the image cannot be checked |
@@ -81,6 +82,7 @@ a few per cent would throw away points like PKS 0537−286's 2022 flare
   year low ([below](#sensitivity-loss-after-the-calibration-ends)).
 - `discrepant`: the rate differs from the error-weighted mean of the rest of
   its observation and filter by more than 10 % and 5σ, both errors combined.
+- `extended`: in an `--extended` filter; the field stars judged the PSF.
 - `override:N`: included by line N despite the listed rules.
 
 **Overrides.** Create `UVOT_output/uvot_overrides.txt`:
@@ -100,6 +102,42 @@ and `flags` names the override line.
 **Changes.** Each run compares `include` with the previous master table and
 lists the exposures that changed, so a new rule, limit or override shows its
 effect at once.
+
+### Extended sources (host galaxies)
+
+**The problem.** The `smeared` rule assumes a point source: a sharp image
+puts about 0.85–0.88 of the light within 15″ inside the 5″ circle, and less
+means the image was smeared. A nearby AGN's host galaxy adds light between
+5″ and 15″, so the concentration is low even in a perfect image. On five
+observations of 3C 120 (z = 0.033; 2007–2025) every V exposure (0.68–0.78)
+and every B exposure (0.74–0.78) failed the rule, while the field stars in
+the same exposures were normal and 3C 120 itself was round (axis ratio
+about 1.05). U and the UV filters (0.84–0.90) were unaffected. V's
+concentration also changes as the nucleus brightens and fades (0.78 in
+2025, when V was 0.6–0.8 mag brighter), so no single lower limit would work.
+
+**What `--extended` does.** In the filters named, the source's
+concentration is not used. The field stars judge the PSF, exactly as for a
+faint source (`psf_broad`, `psf_unchecked`, the `psf` rule with
+`--psf-max-loss`, and the PSF check of the jitter period). The `elongated`
+rule still applies to the source itself, and every other rule is
+unchanged. The rows are flagged `extended`, and Step 7 carries the flag to
+the light curve. On the first page of the PDF they are drawn as crosses,
+"not judged".
+
+**Which filters.** Look at the concentration panel on the PDF's first page
+without the option: a host shows as one filter's points sitting together
+below 0.82 while their rates agree with the rest of their observation.
+For 3C 120 that is V and B.
+
+**What it does not do.** The host's starlight inside the 5″ circle stays
+in the rate. V and B carry a constant extra flux, so their variability
+looks smaller and their colour redder than the nucleus's. Subtracting a
+host flux is up to you (Step 8's `--host-ebv` corrects the host's dust,
+not its stars). The background is not affected: in V, 3C 120's 27.5–35″
+background annulus is 3 % above the far sky, which takes about 1 % off
+the source rate. `--psf-correct` (Step 7) does not correct `extended`
+rows.
 
 ### Sensitivity loss after the calibration ends
 
@@ -321,6 +359,9 @@ make_uvot_master_table.py --coincidence-limit U=0.90
 # Exclude faint-source exposures whose field stars show more than 5 % loss
 make_uvot_master_table.py --psf-max-loss 0.05
 
+# A source with a host galaxy in V and B (3C 120)
+make_uvot_master_table.py --extended V,B
+
 # The included exposures of one filter (include is column 33)
 awk '$1 == "obsid" || ($2 == "UVW1" && $33 == "yes")' UVOT_output/uvot_master_table.txt | less -S
 ```
@@ -340,13 +381,18 @@ awk '$1 == "obsid" || ($2 == "UVW1" && $33 == "yes")' UVOT_output/uvot_master_ta
 4. **Two concentration limits.** Step 4 flags below 0.70 ("clearly trailed
    or smeared"); this step excludes below 0.82.
 
-5. **Faint sources and the jitter period.** A faint source's jitter-period
+5. **A host galaxy fails the `smeared` rule.** If one or two filters lose
+   nearly all their exposures to `smeared`, look at the images: a resolved
+   host needs `--extended` for those filters, not an override (an
+   `include` override also overrides `saturated` and every other rule).
+
+6. **Faint sources and the jitter period.** A faint source's jitter-period
    exposures are kept when the field stars measure both the PSF and the
    pointing, and flagged `psf_broad` when the PSF is broad (most of them).
    Without field stars (`--no-field-stars`, or none in the exposure) they
    are excluded.
 
-6. **V and U after 2022 read low.** The CALDB's sensitivity-loss
+7. **V and U after 2022 read low.** The CALDB's sensitivity-loss
    correction stops changing in 2022 for V and U; constant stars then fall
    about 1.3 % per year (`senscorr_frozen`, [above](#sensitivity-loss-after-the-calibration-ends)).
    A newer `SENSCORR` file fixes this: the flag dates follow the CALDB.
