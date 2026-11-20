@@ -32,7 +32,8 @@ documentation):
     off_centre      the source was found more than 3" from the region
                     centre, so Step 4 left the region at --ra/--dec
     smeared         concentration (5"/15" counts) below 0.82 (not applied
-                    to saturated exposures: their rate is a lower limit)
+                    to saturated exposures: their rate is a lower limit,
+                    nor in the --extended filters)
     elongated       axis ratio above 1.5
     psf             only with --psf-max-loss: the source's own shape is not
                     measurable and the field stars show a larger loss
@@ -42,6 +43,14 @@ documentation):
                     source's centroid, or the field stars)
     duplicate       same EXPID as an included exposure
     override:N      excluded by line N of uvot_overrides.txt
+
+Extended sources (--extended V,B): a host galaxy puts light between 5" and
+15", so the source's concentration says nothing about smearing (3C 120: V
+0.68-0.78, B 0.74-0.78, U and UV 0.84-0.90, field stars normal). In the
+filters named, the smeared rule is not applied and the field stars judge
+the PSF instead, as for a faint source (psf_broad, psf_unchecked, rule psf
+with --psf-max-loss; in the jitter period the PSF check is the stars');
+the axis-ratio rule still applies, and the rows are flagged extended.
 
 Flags (noted, not excluding): sss_mid / sss_high (patch at a level the rule
 does not exclude), sss_edge (centre clear, but more than 10 % of the 5"
@@ -70,6 +79,7 @@ Usage:
     make_uvot_master_table.py --sss-level MID
     make_uvot_master_table.py --coincidence-limit U=0.95
     make_uvot_master_table.py --psf-max-loss 0.05
+    make_uvot_master_table.py --extended V,B
 """
 
 import argparse
@@ -163,12 +173,14 @@ def matching_override(overrides, row):
 
 
 def judge(inv, pos, phot, sss_level, limits, psf_max_loss=None,
-          frozen=None):
+          frozen=None, extended=()):
     """
     (rules, flags) for one exposure; rules empty means include. limits:
     counts-per-frame limit per filter; psf_max_loss: exclude above this
     field-star PSF loss (None: flag only); frozen: {filter: date} from
-    which the CALDB holds the sensitivity-loss correction constant.
+    which the CALDB holds the sensitivity-loss correction constant;
+    extended: filters in which the source is extended (host galaxy), so
+    its concentration is no PSF check and the field stars judge instead.
     """
     rules, flags = [], []
     if inv['status'] != 'candidate':
@@ -198,15 +210,22 @@ def judge(inv, pos, phot, sss_level, limits, psf_max_loss=None,
     if pos['center'] == 'catalog' and snr >= 10:
         rules.append('off_centre')
     conc, ar = _num(pos['conc']), _num(pos['axis_ratio'])
+    if inv['filter'] in extended:
+        # the host's light between 5" and 15" lowers the concentration
+        # whatever the PSF: judge the PSF by the field stars, as for a
+        # faint source whose shape cannot be measured
+        flags.append('extended')
+        conc = float('nan')
     # Coincidence loss flattens a saturated source's core (0.80-0.81), and
     # a saturated rate is a lower limit whatever light the region misses.
     if conc < CONC_MIN and 'saturated' not in rules:
         rules.append('smeared')
     if ar > AXIS_RATIO_MAX:
         rules.append('elongated')
-    # The source's own shape cannot be judged (faint): the field stars say
-    # how much light a broad PSF pushes out of the 5" circle. Flag only by
-    # default: a 7-11 % loss can be worth keeping against a 22 % error.
+    # The source's own shape cannot be judged (faint, or extended): the
+    # field stars say how much light a broad PSF pushes out of the 5"
+    # circle. Flag only by default: a 7-11 % loss can be worth keeping
+    # against a 22 % error.
     loss, loss_err = _num(pos.get('psf_loss')), _num(pos.get('psf_loss_err'))
     if conc != conc:
         if loss != loss:
@@ -338,6 +357,10 @@ def plot_master(pdf_path, rows, src_label, limits):
             sel = [r for r in measured if np.isfinite(r['_ratio'])
                    and set(x.split(':')[0] for x in r['_rules'])
                    <= {own_rule}]
+            # --extended rows are not judged on concentration: own marker
+            ext = [r for r in sel if own_rule == 'smeared'
+                   and 'extended' in r['_flags']]
+            sel = [r for r in sel if r not in ext]
             for inc, color, label in ((True, 'C0', 'included'),
                                       (False, colors[own_rule],
                                        'excluded: ' + own_rule)):
@@ -345,6 +368,11 @@ def plot_master(pdf_path, rows, src_label, limits):
                 ax.scatter([_num(r[key]) for r in pts],
                            [r['_ratio'] for r in pts], s=5, color=color,
                            label='%s (%d)' % (label, len(pts)))
+            if ext:
+                ax.scatter([_num(r[key]) for r in ext],
+                           [r['_ratio'] for r in ext], s=12, marker='x',
+                           color='C2', lw=0.8,
+                           label='extended, not judged (%d)' % len(ext))
             if limit is not None:
                 ax.axvline(limit, color='k', ls=':', lw=0.8)
             ax.axhline(1.0, color='grey', lw=0.6)
@@ -491,7 +519,18 @@ def main(argv=None):
                              'source\'s own shape cannot be measured (e.g. '
                              '0.05; default: flag only, psf_broad from %.2f)'
                         % PSF_BROAD)
+    parser.add_argument('--extended', default='', metavar='FILTER[,FILTER...]',
+                        help='filters in which the source is extended (a '
+                             'host galaxy, e.g. V,B): its concentration is '
+                             'not used for the smeared rule; the field stars '
+                             'judge the PSF instead (default: none)')
     args = parser.parse_args(argv)
+    extended = tuple(f.strip() for f in args.extended.split(',') if f.strip())
+    bad = [f for f in extended if f not in FILTERS]
+    if bad:
+        print('ERROR: --extended %s: expected filters from %s'
+              % (','.join(bad), ','.join(FILTERS)), file=sys.stderr)
+        return 1
     if args.psf_max_loss is not None and not 0 < args.psf_max_loss < 1:
         print('ERROR: --psf-max-loss must be between 0 and 1',
               file=sys.stderr)
@@ -572,7 +611,7 @@ def main(argv=None):
             row.update({k: p.get(k) for k in ('n_stars', 'psf_loss',
                                               'psf_loss_err')})
         rules, flags = judge(inv, p, ph, args.sss_level, limits,
-                             args.psf_max_loss, frozen)
+                             args.psf_max_loss, frozen, extended)
         row['_rules'], row['_flags'] = rules, flags
         row['include'] = 'no' if rules else 'yes'
         rows.append(row)
@@ -617,6 +656,8 @@ def main(argv=None):
                              AXIS_RATIO_MAX, JITTER[0], JITTER[1],
                              'loss > %.2f' % args.psf_max_loss
                              if args.psf_max_loss else 'off (flag only)'),
+        'extended (host galaxy; no smeared rule, PSF from the field stars): '
+        '%s' % (','.join(extended) or 'none'),
         'field stars: pnt_offset (arcsec) of the pointing from Gaia; n_stars, '
         'psf_loss(_err): light the 5" circle loses to a broad PSF (Step 4)',
         'senscorr_frozen: taken after %s holds the sensitivity-loss '
@@ -634,6 +675,9 @@ def main(argv=None):
     # --- report -------------------------------------------------------------
     print('[info] source %s; %d exposures in the inventory' % (src_label,
                                                               len(rows)))
+    if extended:
+        print('[info] extended in %s: no smeared rule there; the field '
+              'stars judge the PSF' % ','.join(extended))
     if overrides:
         print('[info] %d override line(s) from %s' % (len(overrides),
                                                      OVERRIDES_FILE))
